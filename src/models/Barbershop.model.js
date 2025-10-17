@@ -40,6 +40,14 @@ const Barbershop = sequelize.define('Barbershop', {
     type: DataTypes.STRING,
     allowNull: true,
   },
+  latitude: {
+    type: DataTypes.DECIMAL(10, 8), // Format umum untuk latitude
+    allowNull: true, // Bisa diisi nanti oleh owner
+  },
+  longitude: {
+    type: DataTypes.DECIMAL(11, 8), // Format umum untuk longitude
+    allowNull: true, // Bisa diisi nanti oleh owner
+  },
   // --- TAMBAHKAN KOLOM BARU INI ---
   main_image_url: {
     type: DataTypes.STRING,

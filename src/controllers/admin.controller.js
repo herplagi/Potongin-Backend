@@ -3,40 +3,6 @@ const User = require("../models/User.model");
 const bcrypt = require("bcryptjs");
 const sequelize = require("../config/database");
 
-// Mendapatkan semua barbershop
-// exports.getAllBarbershops = async (req, res) => {
-//     try {
-//         const { status } = req.query;
-
-//         let whereClause = {};
-//         if (status && ['pending', 'approved', 'rejected'].includes(status)) {
-//             whereClause.approval_status = status;
-//         }
-
-//         const allShops = await Barbershop.findAll({
-//             where: whereClause,
-//             include: {
-//                 model: User,
-//                 as: 'owner',
-//                 attributes: ['name', 'email']
-//             },
-//             order: [['createdAt', 'DESC']]
-//         });
-
-//         const formattedShops = allShops.map(shop => {
-//             const shopData = shop.get({ plain: true });
-//             if (shopData.opening_hours && typeof shopData.opening_hours === 'string') {
-//                 shopData.opening_hours = JSON.parse(shopData.opening_hours);
-//             }
-//             return shopData;
-//         });
-
-//         res.status(200).json(formattedShops);
-//     } catch (error) {
-//         res.status(500).json({ message: 'Server Error', error: error.message });
-//     }
-// };
-
 exports.getAllBarbershops = async (req, res) => {
   try {
     const { status } = req.query;

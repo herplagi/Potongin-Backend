@@ -16,14 +16,85 @@ const Booking = require('../models/Booking.model');
 // --- FUNGSI UNTUK PUBLIK (Dipanggil oleh Customer App) ---
 // =================================================================
 
+
+// exports.getAllApprovedBarbershops = async (req, res) => {
+//     try {
+//         const barbershops = await Barbershop.findAll({
+//             where: { approval_status: 'approved' },
+//             attributes: ['barbershop_id', 'name', 'address', 'city', 'main_image_url'],
+//         });
+//         res.status(200).json(barbershops);
+//     } catch (error) {
+//         res.status(500).json({ message: "Server Error", error: error.message });
+//     }
+// };
+
 exports.getAllApprovedBarbershops = async (req, res) => {
     try {
+        // Ambil parameter dari query string
+        const { latitude, longitude, max_distance } = req.query;
+
+        // Jika koordinat dan jarak maksimum diberikan, tambahkan logika jarak
+        if (latitude && longitude) {
+            const lat = parseFloat(latitude);
+            const lon = parseFloat(longitude);
+            // Default 50 km jika tidak disebutkan, pastikan max_distance positif
+            const maxDist = max_distance ? Math.max(parseFloat(max_distance), 0) : 50;
+
+            if (isNaN(lat) || isNaN(lon) || isNaN(maxDist) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+                return res.status(400).json({ message: 'Parameter latitude, longitude, atau max_distance tidak valid.' });
+            }
+
+            // Query raw untuk menghitung jarak dan memfilter
+            // R = 6371 km adalah jari-jari bumi
+            const rawQuery = `
+                SELECT *,
+                       (6371 * acos(
+                           cos(radians(:lat)) *
+                           cos(radians(CAST(latitude AS DECIMAL(10,8)))) *
+                           cos(radians(CAST(longitude AS DECIMAL(11,8))) - radians(:lon)) +
+                           sin(radians(:lat)) *
+                           sin(radians(CAST(latitude AS DECIMAL(10,8))))
+                       )) AS distance_km
+                FROM barbershops
+                WHERE approval_status = 'approved'
+                  AND latitude IS NOT NULL
+                  AND longitude IS NOT NULL
+                HAVING distance_km <= :maxDist
+                ORDER BY distance_km ASC;
+            `;
+
+            const rawResults = await sequelize.query(rawQuery, {
+                replacements: { lat: lat, lon: lon, maxDist: maxDist },
+                type: sequelize.QueryTypes.SELECT,
+            });
+
+            // Filter kolom yang tidak diinginkan dan pastikan tipe data sesuai
+            const resultsWithDistance = rawResults.map(shop => {
+                 const { latitude, longitude, distance_km, ...filteredShop } = shop;
+                 // Hapus latitude/longitude dari response jika tidak diperlukan di frontend untuk privasi atau kebersihan data
+                 // Jika kamu ingin menampilkannya di frontend, hapus dua baris berikut:
+                 delete filteredShop.latitude;
+                 delete filteredShop.longitude;
+                 // Tambahkan jarak, pastikan tipe datanya benar
+                 filteredShop.distance_km = parseFloat(distance_km.toFixed(2)); // Bulatkan ke 2 desimal
+                 return filteredShop;
+            });
+
+            res.status(200).json(resultsWithDistance);
+            return; // Hentikan eksekusi fungsi setelah mengirim response untuk filter jarak
+        }
+
+        // Jika tidak ada filter jarak, kembalikan semua barbershop yang disetujui seperti biasa
         const barbershops = await Barbershop.findAll({
             where: { approval_status: 'approved' },
             attributes: ['barbershop_id', 'name', 'address', 'city', 'main_image_url'],
         });
+
         res.status(200).json(barbershops);
+
     } catch (error) {
+        console.error("GET ALL BARBERSHOPS ERROR:", error);
         res.status(500).json({ message: "Server Error", error: error.message });
     }
 };
@@ -323,5 +394,54 @@ exports.getGalleryImages = async (req, res) => {
     } catch (error) {
         console.error('Get gallery error:', error);
         res.status(500).json({ message: 'Server error' });
+    }
+};
+
+exports.updateBarbershopLocation = async (req, res) => {
+    const t = await sequelize.transaction();
+    try {
+        const { barbershopId } = req.params;
+        const ownerId = req.user.id;
+        const { latitude, longitude } = req.body; // Hanya ambil latitude dan longitude
+
+        const barbershop = await Barbershop.findOne({
+            where: { barbershop_id: barbershopId, owner_id: ownerId },
+            transaction: t
+        });
+
+        if (!barbershop) {
+            await t.rollback();
+            return res.status(404).json({ message: 'Barbershop tidak ditemukan atau Anda tidak punya hak akses.' });
+        }
+
+        // Validasi input latitude dan longitude
+        let updateData = {};
+        if (latitude !== undefined) {
+            const lat = parseFloat(latitude);
+            if (isNaN(lat) || lat < -90 || lat > 90) {
+                await t.rollback();
+                return res.status(400).json({ message: 'Latitude tidak valid.' });
+            }
+            updateData.latitude = lat;
+        }
+        if (longitude !== undefined) {
+            const lon = parseFloat(longitude);
+            if (isNaN(lon) || lon < -180 || lon > 180) {
+                await t.rollback();
+                return res.status(400).json({ message: 'Longitude tidak valid.' });
+            }
+            updateData.longitude = lon;
+        }
+
+        // JANGAN ubah approval_status, rejection_reason, atau verified_by
+        // Kita hanya memperbarui lokasi
+        await barbershop.update(updateData, { transaction: t });
+
+        await t.commit();
+        res.status(200).json({ message: 'Lokasi barbershop berhasil diperbarui.', barbershop });
+    } catch (error) {
+        await t.rollback();
+        console.error("UPDATE BARBERSHOP LOCATION ERROR:", error);
+        res.status(500).json({ message: 'Terjadi kesalahan pada server', error: error.message });
     }
 };

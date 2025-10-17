@@ -21,7 +21,6 @@ router.get("/", BarbershopController.getAllApprovedBarbershops);
 // GET /api/barbershops/detail/:id
 router.get("/detail/:id", BarbershopController.getBarbershopDetailsById);
 
-
 // =================================================================
 // --- Rute Customer (Perlu Login) ---
 // =================================================================
@@ -43,7 +42,6 @@ router.get(
   authMiddleware,
   BarbershopController.getMyApplicationStatus
 );
-
 
 // =================================================================
 // --- Rute Owner (Perlu Login & Role Owner) ---
@@ -73,6 +71,12 @@ router.put(
   ]),
   BarbershopController.updateMyBarbershop
 );
+// UPDATE LOKASI
+router.patch(
+  "/:barbershopId/location",
+  ownerMiddleware,
+  BarbershopController.updateBarbershopLocation
+);
 
 // PATCH /api/barbershops/:barbershopId/resubmit
 router.patch(
@@ -92,15 +96,12 @@ router.get(
 router.post(
   "/:barbershopId/upload-image",
   ownerMiddleware,
-  uploadImages.single('image'),
+  uploadImages.single("image"),
   BarbershopController.uploadMainImage
 );
 
 // ✅ NEW: Get gallery images
-router.get(
-  "/:barbershopId/gallery",
-  BarbershopController.getGalleryImages
-);
+router.get("/:barbershopId/gallery", BarbershopController.getGalleryImages);
 
 // Mount nested routes dengan :barbershopId
 // URL akan menjadi: /api/barbershops/:barbershopId/services
