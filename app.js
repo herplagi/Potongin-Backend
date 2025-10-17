@@ -10,6 +10,7 @@ const Service = require('./src/models/Service.model');
 const Staff = require('./src/models/Staff.model');
 const Booking = require('./src/models/Booking.model');
 const Notification = require('./src/models/Notification.model');
+const Review = require('./src/models/Review.model');
 
 // Impor Rute
 const authRoutes = require('./src/routes/auth.routes');
@@ -19,6 +20,7 @@ const serviceRoutes = require('./src/routes/service.routes');
 const staffRoutes = require('./src/routes/staff.routes');
 const bookingRoutes = require('./src/routes/booking.routes');
 const notificationRoutes = require('./src/routes/notification.routes');
+const reviewRoutes = require('./src/routes/review.routes');
 
 
 const app = express();
@@ -40,6 +42,7 @@ app.use('/api/barbershops/:barbershopId/services', serviceRoutes);
 app.use('/api/barbershops/:barbershopId/staff', staffRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/reviews', reviewRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);

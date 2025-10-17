@@ -1,0 +1,84 @@
+// src/models/Review.model.js
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
+const User = require('./User.model');
+const Barbershop = require('./Barbershop.model');
+const Booking = require('./Booking.model');
+
+const Review = sequelize.define('Review', {
+    review_id: {
+        type: DataTypes.UUID,
+        defaultValue: DataTypes.UUIDV4,
+        primaryKey: true,
+    },
+    booking_id: {
+        type: DataTypes.UUID,
+        allowNull: false,
+        unique: true, // Satu booking hanya bisa direview sekali
+        references: { model: 'bookings', key: 'booking_id' }
+    },
+    customer_id: {
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: { model: 'users', key: 'user_id' }
+    },
+    barbershop_id: {
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: { model: 'barbershops', key: 'barbershop_id' }
+    },
+    rating: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        validate: {
+            min: 1,
+            max: 5
+        },
+        comment: 'Rating 1-5 bintang'
+    },
+    comment: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+    },
+    // Admin moderation fields
+    is_approved: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: true, // Auto-approve by default
+        comment: 'Admin dapat moderate review'
+    },
+    is_flagged: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+        comment: 'Ditandai untuk review manual'
+    },
+    admin_note: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        comment: 'Catatan dari admin'
+    },
+    moderated_by: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        references: { model: 'users', key: 'user_id' }
+    },
+    moderated_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+    },
+}, {
+    tableName: 'reviews',
+    timestamps: true,
+});
+
+// Relasi
+Review.belongsTo(User, { as: 'customer', foreignKey: 'customer_id' });
+Review.belongsTo(Barbershop, { foreignKey: 'barbershop_id' });
+Review.belongsTo(Booking, { foreignKey: 'booking_id' });
+Review.belongsTo(User, { as: 'moderator', foreignKey: 'moderated_by' });
+
+// Relasi balik
+User.hasMany(Review, { foreignKey: 'customer_id' });
+Barbershop.hasMany(Review, { foreignKey: 'barbershop_id' });
+Booking.hasOne(Review, { foreignKey: 'booking_id' });
+
+module.exports = Review;
