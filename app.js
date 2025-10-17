@@ -2,6 +2,7 @@ const express = require('express');
 require('dotenv').config();
 const cors = require('cors');
 const sequelize = require('./src/config/database');
+const cron = require('node-cron');
 
 // Impor Model
 const User = require('./src/models/User.model');
@@ -22,6 +23,7 @@ const bookingRoutes = require('./src/routes/booking.routes');
 const notificationRoutes = require('./src/routes/notification.routes');
 const reviewRoutes = require('./src/routes/review.routes');
 
+const bookingController = require('./src/controllers/booking.controller');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -31,6 +33,13 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
+
+cron.schedule('*/5 * * * *', async () => {
+    console.log('⏰ Cron Job: Memanggil fungsi expirePendingBookings...');
+    await bookingController.expirePendingBookings(); 
+});
+
+console.log('✅ Cron job untuk cek booking expired telah dijadwalkan (setiap 5 menit).');
 
 sequelize.sync({ alter: true });
 

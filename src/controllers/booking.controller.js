@@ -4,6 +4,7 @@ const Service = require("../models/Service.model");
 const Staff = require("../models/Staff.model");
 const Barbershop = require("../models/Barbershop.model");
 const User = require("../models/User.model");
+const { core } = require("../config/midtrans.config");
 const {
   snap,
   getFrontendUrl,
@@ -387,3 +388,262 @@ exports.updateBookingStatus = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+exports.expirePendingBookings = async () => {
+    console.log('🔍 Memeriksa booking yang expired...');
+
+    try {
+        const now = new Date();
+        // Batas waktu: 15 menit dalam milidetik
+        const cutoffTime = new Date(now.getTime() - (15 * 60 * 1000));
+
+        // Cari booking yang statusnya pending_payment dan dibuat sebelum cutoffTime
+        const pendingBookings = await Booking.findAll({
+            where: {
+                status: 'pending_payment',
+                createdAt: { [Op.lt]: cutoffTime }
+            }
+        });
+
+        console.log(`📅 Menemukan ${pendingBookings.length} booking yang mungkin expired.`);
+
+        for (const booking of pendingBookings) {
+            console.log(`🔍 Memeriksa booking ${booking.booking_id} dengan transaction_id ${booking.transaction_id}...`);
+
+            try {
+                // Cek status pembayaran ke Midtrans
+                const midtransStatus = await core.transaction.status(booking.transaction_id);
+                console.log(`📊 Status Midtrans untuk ${booking.transaction_id}:`, midtransStatus.transaction_status);
+
+                // Jika status bukan settlement (berhasil) atau capture (berhasil), maka kita anggap pembayaran tidak selesai
+                if (midtransStatus.transaction_status !== 'settlement' && midtransStatus.transaction_status !== 'capture') {
+                    console.log(`❌ Pembayaran untuk booking ${booking.booking_id} belum selesai (status: ${midtransStatus.transaction_status}). Booking dibatalkan.`);
+
+                    // Update status booking menjadi 'cancelled' atau 'expired'
+                    await booking.update({
+                        status: 'cancelled', // Ganti ke 'expired' jika kamu menambahkan enum itu
+                        payment_status: 'expired' // Update payment status juga
+                    });
+
+                    // --- KEMBALIKAN SLOT WAKTU ---
+                    // Karena kamu menggunakan tabel Booking untuk mengecek konflik di createBooking,
+                    // mengubah status ke 'cancelled' sudah cukup agar slot tersebut bisa dipesan kembali.
+                    // Jika kamu memiliki tabel atau kolom khusus untuk slot waktu, kamu perlu menambahkan logika untuk mengupdate status slot tersebut agar bisa dipesan kembali.
+
+                    console.log(`✅ Booking ${booking.booking_id} telah diupdate menjadi cancelled/expired.`);
+
+                    // Kirim notifikasi ke customer bahwa bookingnya dibatalkan karena pembayaran tidak selesai
+                    // await NotificationService.notifyBookingExpired(booking.customer_id, { bookingId: booking.booking_id });
+
+                } else {
+                    console.log(`✅ Pembayaran untuk booking ${booking.booking_id} sudah selesai (status: ${midtransStatus.transaction_status}). Tidak ada perubahan status.`);
+                }
+            } catch (midtransError) {
+                // --- PENANGANAN ERROR DARI MIDTRANS ---
+                console.log(`🔍 Menerima error saat mengecek status untuk booking ${booking.booking_id}:`, midtransError.message || midtransError.name);
+
+                // --- PERUBAHAN UTAMA: Perbaiki pengecekan error 404 ---
+                // Midtrans API bisa mengembalikan httpStatusCode sebagai string atau number.
+                // Gunakan parseInt untuk memastikan perbandingan angka dengan angka.
+                const statusCode = parseInt(midtransError.httpStatusCode, 10);
+
+                if (statusCode === 404) {
+                    console.log(`⚠️ Transaksi ${booking.transaction_id} tidak ditemukan di Midtrans (404). Asumsikan expired.`);
+                    // Jika Midtrans mengatakan transaksi tidak ada, kita asumsikan pembayaran tidak selesai/expired.
+                    // Update status booking menjadi 'cancelled' karena Midtrans tidak bisa mengonfirmasi pembayaran.
+                    try {
+                        await booking.update({
+                            status: 'cancelled',
+                            payment_status: 'expired'
+                        });
+                        console.log(`✅ Booking ${booking.booking_id} (transaksi hilang) telah diupdate menjadi cancelled/expired.`);
+                        // Kirim notifikasi ke customer
+                        // await NotificationService.notifyBookingExpired(booking.customer_id, { bookingId: booking.booking_id });
+                    } catch (updateDbError) {
+                        console.error(`❌ Gagal mengupdate status booking ${booking.booking_id} di database setelah error 404:`, updateDbError);
+                    }
+                } else {
+                    // Jika error bukan 404 (misalnya 500, timeout, dll), log dan lanjutkan ke booking berikutnya
+                    // Jangan batalkan booking hanya karena error sementara dari Midtrans
+                    console.error(`❌ Gagal mengambil status Midtrans untuk ${booking.transaction_id}. Error Code: ${statusCode || 'N/A'}`, midtransError);
+                    // Kamu bisa pilih untuk mengirim notifikasi error ke admin atau log ke sistem monitoring
+                    // Tapi untuk cron ini, kita lanjutkan ke booking berikutnya
+                }
+                // --- AKHIR PERUBAHAN UTAMA ---
+            }
+        }
+
+        console.log('✅ Pemeriksaan booking expired selesai.');
+
+    } catch (error) {
+        console.error('❌ Error saat memeriksa booking expired:', error);
+    }
+};
+
+exports.checkStaffAvailability = async (req, res) => {
+    try {
+        const { barbershop_id, date, time } = req.query; // Ambil dari query string
+
+        // Validasi parameter dasar
+        if (!barbershop_id || !date) {
+            return res.status(400).json({ message: 'Parameter barbershop_id dan date wajib disertakan.' });
+        }
+
+        // Validasi format tanggal
+        const parsedDate = new Date(date);
+        if (isNaN(parsedDate.getTime())) {
+            return res.status(400).json({ message: 'Format tanggal tidak valid.' });
+        }
+        // Format tanggal menjadi YYYY-MM-DD untuk konsistensi
+        const formattedDate = parsedDate.toISOString().split('T')[0];
+
+        // --- LOGIKA UNTUK MENCARI WAKTU PENUH (SEMUA STAFF DIBOOKING) ---
+        if (!time) {
+            console.log(`📅 Memeriksa waktu penuh untuk barbershop ${barbershop_id} pada tanggal ${formattedDate}`);
+            
+            try {
+                // 1. Dapatkan semua staff di barbershop
+                const allStaff = await Staff.findAll({ 
+                    where: { barbershop_id },
+                    attributes: ['staff_id'] // Hanya ambil staff_id untuk efisiensi
+                });
+                
+                if (!allStaff || allStaff.length === 0) {
+                    console.log("理发店没有员工注册。");
+                    return res.status(200).json({ fully_booked_times: [] }); 
+                }
+                
+                const totalStaffCount = allStaff.length;
+                console.log(`👨‍💼 Total staff ditemukan: ${totalStaffCount}`);
+
+                // 2. Dapatkan jam buka barbershop untuk tanggal tersebut
+                //    Anda perlu logika untuk mendapatkan jam buka dari model Barbershop.
+                //    Untuk contoh ini, kita akan menggunakan jam tetap.
+                //    *** GANTILAH BAGIAN INI DENGAN LOGIKA SEBENARNYA ***
+                // -------------------------------------------------------------------
+                // CONTOH LOGIKA MENDAPATKAN JAM BUKA (GANTI DENGAN YANG SEBENARNYA):
+                // const barbershopDetails = await Barbershop.findByPk(barbershop_id);
+                // if (!barbershopDetails) {
+                //     return res.status(404).json({ message: 'Barbershop tidak ditemukan.' });
+                // }
+                // const dayOfWeek = new Date(formattedDate).toLocaleDateString('id-ID', { weekday: 'long' });
+                // const hoursObject = typeof barbershopDetails.opening_hours === 'string' 
+                //     ? JSON.parse(barbershopDetails.opening_hours) 
+                //     : barbershopDetails.opening_hours;
+                // const dayInfo = hoursObject[dayOfWeek];
+                // if (!dayInfo || !dayInfo.aktif) {
+                //     return res.status(200).json({ fully_booked_times: [] }); // Tutup hari itu
+                // }
+                // const startHour = dayInfo.buka; // Misal: "09:00"
+                // const endHour = dayInfo.tutup;   // Misal: "21:00"
+                // -------------------------------------------------------------------
+
+                // *** CONTOH SEMENTARA: Gunakan jam tetap ***
+                const startHour = '09:00'; 
+                const endHour = '21:00';   
+                const intervalMinutes = 60; 
+                // -------------------------------------------
+
+                // 3. Buat daftar slot waktu berdasarkan jam buka
+                const timeSlots = generateTimeSlots(startHour, endHour, intervalMinutes);
+                console.log(`🕒 Slot waktu yang dihasilkan: ${timeSlots.join(', ')}`);
+
+                const fullyBookedTimes = [];
+
+                // 4. Untuk setiap slot waktu, hitung staff yang tersedia
+                for (const slotTime of timeSlots) {
+                    const slotDateTimeStart = new Date(`${formattedDate}T${slotTime}:00+07:00`); // Tambahkan +07:00 untuk WIB
+                    const slotDateTimeEnd = new Date(slotDateTimeStart.getTime() + intervalMinutes * 60000);
+
+                    // Cari booking yang konflik pada slot waktu ini
+                    const conflictingBookings = await Booking.findAll({
+                        where: {
+                            barbershop_id: barbershop_id,
+                            status: { [Op.ne]: "cancelled" },
+                            booking_time: { [Op.lt]: slotDateTimeEnd },
+                            end_time: { [Op.gt]: slotDateTimeStart },
+                        },
+                        attributes: ['staff_id'], // Hanya ambil staff_id
+                    });
+
+                    const busyStaffCount = conflictingBookings.length;
+                    console.log(`🕒 Memeriksa slot ${slotTime}: ${busyStaffCount} staff sibuk dari ${totalStaffCount} total.`);
+
+                    // Jika semua staff sibuk, waktu ini penuh
+                    if (busyStaffCount >= totalStaffCount) {
+                        fullyBookedTimes.push(slotTime);
+                        console.log(`🕒 Slot ${slotTime} ditandai sebagai penuh.`);
+                    }
+                }
+
+                console.log("🕒 Waktu penuh yang ditemukan:", fullyBookedTimes);
+                return res.status(200).json({ fully_booked_times: fullyBookedTimes });
+                
+            } catch (dbError) {
+                console.error("❌ Error saat mencari waktu penuh:", dbError);
+                return res.status(500).json({ message: 'Gagal memeriksa ketersediaan waktu.', error: dbError.message });
+            }
+        }
+        // --- AKHIR LOGIKA UNTUK MENCARI WAKTU PENUH ---
+
+        // --- LOGIKA UNTUK MENCARI STAFF YANG TIDAK TERSEDIA (SEPERTI SEBELUMNYA) ---
+        // Jika `time` ada, lanjutkan dengan logika lama
+        
+        // Validasi format waktu
+        const bookingDateTime = new Date(`${formattedDate}T${time}:00+07:00`); // Tambahkan +07:00 untuk WIB
+        if (isNaN(bookingDateTime.getTime())) {
+            return res.status(400).json({ message: 'Format waktu tidak valid.' });
+        }
+
+        console.log(`🔍 Memeriksa ketersediaan staff untuk barbershop ${barbershop_id} pada ${formattedDate} ${time}`);
+
+        // Hitung waktu mulai dan akhir berdasarkan waktu yang dipilih
+        // (Asumsi durasi layanan rata-rata 60 menit, sesuaikan jika berbeda)
+        const durationInMinutes = 60; // Ganti dengan durasi layanan standar atau ambil dari service_id jika dinamis
+        const bookingStartTime = bookingDateTime;
+        const bookingEndTime = new Date(bookingStartTime.getTime() + durationInMinutes * 60000);
+
+        // Ambil semua staff di barbershop ini
+        const allStaff = await Staff.findAll({ where: { barbershop_id } });
+        if (!allStaff || allStaff.length === 0) {
+            return res.status(404).json({ message: 'Barbershop ini belum memiliki staff terdaftar.', unavailable_staff_ids: [] });
+        }
+
+        // Cari booking yang konflik (status bukan cancelled) pada waktu tersebut
+        const conflictingBookings = await Booking.findAll({
+            where: {
+                barbershop_id: barbershop_id,
+                status: { [Op.ne]: "cancelled" }, // Jangan sertakan booking yang dibatalkan
+                booking_time: { [Op.lt]: bookingEndTime },
+                end_time: { [Op.gt]: bookingStartTime },
+            },
+            attributes: ['staff_id'], // Hanya ambil staff_id
+        });
+
+        // Ekstrak staff_id dari booking yang konflik
+        const busyStaffIds = conflictingBookings.map(b => b.staff_id);
+        console.log(`👨‍🔧 Staff yang tidak tersedia: [${busyStaffIds.join(', ')}]`);
+
+        // Kembalikan daftar staff_id yang *tidak tersedia*
+        res.status(200).json({
+            unavailable_staff_ids: busyStaffIds
+        });
+        // --- AKHIR LOGIKA UNTUK MENCARI STAFF YANG TIDAK TERSEDIA ---
+
+    } catch (error) {
+        console.error("❌ Check staff availability error:", error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
+
+function generateTimeSlots(start, end, intervalMinutes) {
+  const slots = [];
+  let currentTime = new Date(`1970-01-01T${start}:00`);
+  const endTime = new Date(`1970-01-01T${end}:00`);
+
+  while (currentTime < endTime) {
+    slots.push(currentTime.toTimeString().substring(0, 5));
+    currentTime.setMinutes(currentTime.getMinutes() + intervalMinutes);
+  }
+  return slots;
+}

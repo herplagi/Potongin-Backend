@@ -8,6 +8,8 @@ const BookingController = require('../controllers/booking.controller');
 router.post('/', authMiddleware, checkRole('customer'), BookingController.createBooking);
 router.get('/my-bookings', authMiddleware, checkRole('customer'), BookingController.getMyBookings);
 
+router.get('/check-availability', BookingController.checkStaffAvailability);
+
 // Owner Routes
 router.get('/barbershop/:barbershopId', authMiddleware, checkRole('owner'), BookingController.getOwnerBookings);
 router.patch('/barbershop/:barbershopId/:bookingId', authMiddleware, checkRole('owner'), BookingController.updateBookingStatus);

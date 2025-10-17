@@ -8,7 +8,13 @@ const sequelize = new Sequelize(
   {
     host: process.env.DB_HOST,
     dialect: 'mysql',
-    port: process.env.DB_PORT || 3306, 
+    port: process.env.DB_PORT || 3306,
+    define: {
+      // --- KONFIGURASI ZONA WAKTU ---
+      timezone: '+07:00', // <-- TAMBAHKAN/UBAH INI MENJADI WIB (+07:00)
+      // ----------------------------
+    },
+    timezone: '+07:00', 
   }
 );
 
