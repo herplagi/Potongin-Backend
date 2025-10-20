@@ -201,12 +201,17 @@ exports.createBooking = async (req, res) => {
 
     // ✅ KIRIM NOTIFIKASI
     try {
-      await NotificationService.notifyBookingCreated(customerId, {
-        serviceName: service.name,
+      console.log("📤 Memicu notifikasi ke owner...");
+      await NotificationService.notifyOwnerNewBooking(barbershop.barbershop_id, {
         bookingId: newBooking.booking_id,
+        serviceName: service.name,
+        customerName: customer?.name || "Customer", 
+        bookingTime: newBooking.booking_time,
       });
+      console.log("📬 Notifikasi ke owner telah dipicu.");
     } catch (notifError) {
-      console.error("⚠️ Notification error:", notifError);
+      console.error("⚠️ Gagal mengirim notifikasi ke owner:", notifError);
+      
     }
 
     // ✅ RESPONSE SUKSES
@@ -647,3 +652,4 @@ function generateTimeSlots(start, end, intervalMinutes) {
   }
   return slots;
 }
+
