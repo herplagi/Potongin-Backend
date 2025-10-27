@@ -99,6 +99,12 @@ router.get(
   BarbershopController.getTransactionReport
 );
 
+router.patch(
+  "/:barbershopId/description",
+  ownerMiddleware,
+  BarbershopController.updateBarbershopDescription
+);
+
 // ✅ NEW: Upload main image
 router.post(
   "/:barbershopId/upload-image",

@@ -515,8 +515,26 @@ exports.updateBarbershopLocation = async (req, res) => {
   try {
     const { barbershopId } = req.params;
     const ownerId = req.user.id;
-    const { latitude, longitude } = req.body; // Hanya ambil latitude dan longitude
+    const { latitude, longitude } = req.body;
 
+    console.log('📍 UPDATE LOCATION REQUEST:', {
+      barbershopId,
+      ownerId,
+      latitude,
+      longitude,
+      latitudeType: typeof latitude,
+      longitudeType: typeof longitude
+    });
+
+    // Validasi parameter wajib
+    if (latitude === undefined || longitude === undefined) {
+      await t.rollback();
+      return res.status(400).json({ 
+        message: 'Parameter latitude dan longitude wajib disertakan.' 
+      });
+    }
+
+    // Cari barbershop
     const barbershop = await Barbershop.findOne({
       where: { barbershop_id: barbershopId, owner_id: ownerId },
       transaction: t,
@@ -524,46 +542,75 @@ exports.updateBarbershopLocation = async (req, res) => {
 
     if (!barbershop) {
       await t.rollback();
-      return res
-        .status(404)
-        .json({
-          message:
-            "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
-        });
+      return res.status(404).json({
+        message: "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
+      });
     }
 
-    // Validasi input latitude dan longitude
-    let updateData = {};
-    if (latitude !== undefined) {
-      const lat = parseFloat(latitude);
-      if (isNaN(lat) || lat < -90 || lat > 90) {
-        await t.rollback();
-        return res.status(400).json({ message: "Latitude tidak valid." });
-      }
-      updateData.latitude = lat;
-    }
-    if (longitude !== undefined) {
-      const lon = parseFloat(longitude);
-      if (isNaN(lon) || lon < -180 || lon > 180) {
-        await t.rollback();
-        return res.status(400).json({ message: "Longitude tidak valid." });
-      }
-      updateData.longitude = lon;
+    console.log('🏪 BARBERSHOP SEBELUM UPDATE:', {
+      id: barbershop.barbershop_id,
+      name: barbershop.name,
+      oldLatitude: barbershop.latitude,
+      oldLongitude: barbershop.longitude
+    });
+
+    // Validasi dan konversi latitude
+    const lat = parseFloat(latitude);
+    if (isNaN(lat) || lat < -90 || lat > 90) {
+      await t.rollback();
+      return res.status(400).json({ 
+        message: `Latitude tidak valid: ${latitude}. Harus antara -90 dan 90.` 
+      });
     }
 
-    // JANGAN ubah approval_status, rejection_reason, atau verified_by
-    // Kita hanya memperbarui lokasi
-    await barbershop.update(updateData, { transaction: t });
+    // Validasi dan konversi longitude
+    const lon = parseFloat(longitude);
+    if (isNaN(lon) || lon < -180 || lon > 180) {
+      await t.rollback();
+      return res.status(400).json({ 
+        message: `Longitude tidak valid: ${longitude}. Harus antara -180 dan 180.` 
+      });
+    }
+
+    // ✅ UPDATE LOKASI (JANGAN ubah approval_status)
+    await barbershop.update({
+      latitude: lat,
+      longitude: lon
+    }, { 
+      transaction: t,
+      // Force update even if values are the same
+      silent: false
+    });
+
+    // Commit transaction
     await t.commit();
-    res
-      .status(200)
-      .json({ message: "Lokasi barbershop berhasil diperbarui.", barbershop });
+
+    // Fetch ulang data terbaru untuk memastikan
+    const updatedBarbershop = await Barbershop.findByPk(barbershopId);
+
+    console.log('✅ BARBERSHOP SETELAH UPDATE:', {
+      id: updatedBarbershop.barbershop_id,
+      name: updatedBarbershop.name,
+      newLatitude: updatedBarbershop.latitude,
+      newLongitude: updatedBarbershop.longitude
+    });
+
+    res.status(200).json({ 
+      message: "Lokasi barbershop berhasil diperbarui.", 
+      barbershop: updatedBarbershop,
+      updated: {
+        latitude: updatedBarbershop.latitude,
+        longitude: updatedBarbershop.longitude
+      }
+    });
+
   } catch (error) {
     await t.rollback();
-    console.error("UPDATE BARBERSHOP LOCATION ERROR:", error);
-    res
-      .status(500)
-      .json({ message: "Terjadi kesalahan pada server", error: error.message });
+    console.error("❌ UPDATE BARBERSHOP LOCATION ERROR:", error);
+    res.status(500).json({ 
+      message: "Terjadi kesalahan pada server", 
+      error: error.message 
+    });
   }
 };
 
@@ -703,5 +750,51 @@ exports.getTransactionReport = async (req, res) => {
   } catch (error) {
     console.error("GET TRANSACTION REPORT ERROR:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+exports.updateBarbershopDescription = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { barbershopId } = req.params;
+    const ownerId = req.user.id;
+    const { description } = req.body;
+
+    const barbershop = await Barbershop.findOne({
+      where: { barbershop_id: barbershopId, owner_id: ownerId },
+      transaction: t,
+    });
+
+    if (!barbershop) {
+      await t.rollback();
+      return res.status(404).json({
+        message: "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
+      });
+    }
+
+    // Validasi minimal karakter (opsional)
+    if (description && description.trim().length > 0 && description.trim().length < 10) {
+      await t.rollback();
+      return res.status(400).json({ message: "Deskripsi minimal 10 karakter." });
+    }
+
+    // ✅ PENTING: Hanya update deskripsi, JANGAN ubah approval_status
+    await barbershop.update(
+      { description: description || null },
+      { transaction: t }
+    );
+
+    await t.commit();
+    res.status(200).json({
+      message: "Deskripsi barbershop berhasil diperbarui.",
+      barbershop,
+    });
+  } catch (error) {
+    await t.rollback();
+    console.error("UPDATE DESCRIPTION ERROR:", error);
+    res.status(500).json({
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
   }
 };
