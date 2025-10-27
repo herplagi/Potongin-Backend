@@ -1,3 +1,4 @@
+// src/models/Staff.model.js
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const Barbershop = require('./Barbershop.model');
@@ -23,6 +24,11 @@ const Staff = sequelize.define('Staff', {
   specialty: { 
     type: DataTypes.STRING,
     allowNull: true,
+  },
+  is_active: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
   },
 }, {
   tableName: 'staff',

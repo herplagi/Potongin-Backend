@@ -129,7 +129,12 @@ exports.getBarbershopDetailsById = async (req, res) => {
           where: { is_active: true },
           required: false,
         },
-        { model: Staff, as: "staff", required: false },
+        { 
+          model: Staff, 
+          as: "staff", 
+          where: { is_active: true }, // ✅ FILTER HANYA STAFF AKTIF
+          required: false 
+        },
       ],
     });
     if (!barbershop) {
@@ -142,6 +147,7 @@ exports.getBarbershopDetailsById = async (req, res) => {
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
+
 
 // =================================================================
 // --- FUNGSI UNTUK CUSTOMER / PENDAFTARAN ---
