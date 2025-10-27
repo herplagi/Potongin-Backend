@@ -514,7 +514,7 @@ exports.checkStaffAvailability = async (req, res) => {
                 });
                 
                 if (!allStaff || allStaff.length === 0) {
-                    console.log("理发店没有员工注册。");
+                    console.log("Tidak ada staff terdaftar di barbershop ini.");
                     return res.status(200).json({ fully_booked_times: [] }); 
                 }
                 
