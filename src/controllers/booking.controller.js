@@ -514,7 +514,7 @@ exports.checkStaffAvailability = async (req, res) => {
                 });
                 
                 if (!allStaff || allStaff.length === 0) {
-                    console.log("Tidak ada staff terdaftar di barbershop ini.");
+                    console.log("Tidak ada staff terdaftar di barbershop ini!");
                     return res.status(200).json({ fully_booked_times: [] }); 
                 }
                 
@@ -627,7 +627,7 @@ exports.checkStaffAvailability = async (req, res) => {
 
         // Ekstrak staff_id dari booking yang konflik
         const busyStaffIds = conflictingBookings.map(b => b.staff_id);
-        console.log(`👨‍🔧 Staff yang tidak tersedia: [${busyStaffIds.join(', ')}]`);
+        console.log(`👨‍🔧 Staff yang tidak tersedia : [${busyStaffIds.join(', ')}]`);
 
         // Kembalikan daftar staff_id yang *tidak tersedia*
         res.status(200).json({

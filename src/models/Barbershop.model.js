@@ -52,6 +52,12 @@ const Barbershop = sequelize.define('Barbershop', {
   main_image_url: {
     type: DataTypes.STRING,
     allowNull: true, // Boleh kosong, diisi nanti oleh owner
+  },
+  description: {
+    type: DataTypes.TEXT,
+    allowNull: true, // Boleh kosong
+    defaultValue: null,
+    comment: 'Deskripsi barbershop, bisa berisi fasilitas, suasana, dll.'
   }
   // -----------------------------
 }, { tableName: 'barbershops', timestamps: true });

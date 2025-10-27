@@ -92,6 +92,13 @@ router.get(
   BarbershopController.getBarbershopKpis
 );
 
+// GET /api/barbershops/:barbershopId/reports/transactions
+router.get(
+  "/:barbershopId/reports/transactions",
+  ownerMiddleware,
+  BarbershopController.getTransactionReport
+);
+
 // ✅ NEW: Upload main image
 router.post(
   "/:barbershopId/upload-image",
