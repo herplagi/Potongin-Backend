@@ -8,7 +8,7 @@ const upload = require("../middleware/upload.middleware");
 const BarbershopController = require("../controllers/barbershop.controller");
 const serviceRoutes = require("./service.routes");
 const staffRoutes = require("./staff.routes");
-const scheduleRoutes = require("./schedule.routes"); // ✅ NEW
+// const scheduleRoutes = require("./schedule.routes"); // ✅ NEW
 const uploadImages = require("../middleware/uploadImages.middleware");
 
 const ownerMiddleware = [authMiddleware, checkRole("owner")];
@@ -108,6 +108,6 @@ router.get("/:barbershopId/gallery", BarbershopController.getGalleryImages);
 // Mount nested routes dengan :barbershopId
 router.use("/:barbershopId/services", serviceRoutes);
 router.use("/:barbershopId/staff", staffRoutes);
-router.use("/:barbershopId/schedule", scheduleRoutes); // ✅ NEW
+// router.use("/:barbershopId/schedule", scheduleRoutes); // ✅ NEW
 
 module.exports = router;

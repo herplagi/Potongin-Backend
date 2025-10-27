@@ -12,7 +12,7 @@ const Staff = require('./src/models/Staff.model');
 const Booking = require('./src/models/Booking.model');
 const Notification = require('./src/models/Notification.model');
 const Review = require('./src/models/Review.model');
-const BarbershopSchedule = require('./src/models/BarbershopSchedule.model');
+// const BarbershopSchedule = require('./src/models/BarbershopSchedule.model');
 
 // Impor Rute
 const authRoutes = require('./src/routes/auth.routes');
