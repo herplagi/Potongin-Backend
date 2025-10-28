@@ -368,6 +368,51 @@ exports.getBarbershopKpis = async (req, res) => {
     }
 
     const now = new Date();
+    
+    // Get data untuk 7 hari terakhir untuk chart
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(now.getDate() - 6); // 6 hari yang lalu + hari ini = 7 hari
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    // Query untuk mendapatkan pendapatan per hari
+    const weeklyRevenue = await Booking.findAll({
+      where: {
+        barbershop_id: barbershopId,
+        status: "completed",
+        payment_status: "paid",
+        paid_at: {
+          [Op.gte]: sevenDaysAgo,
+        },
+      },
+      attributes: [
+        [sequelize.fn('DATE', sequelize.col('paid_at')), 'date'],
+        [sequelize.fn('SUM', sequelize.col('total_price')), 'revenue'],
+      ],
+      group: [sequelize.fn('DATE', sequelize.col('paid_at'))],
+      order: [[sequelize.fn('DATE', sequelize.col('paid_at')), 'ASC']],
+      raw: true,
+    });
+
+    // Format data untuk chart - pastikan semua 7 hari ada
+    const chartData = [];
+    const dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+    
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(sevenDaysAgo);
+      date.setDate(sevenDaysAgo.getDate() + i);
+      const dateString = date.toISOString().split('T')[0];
+      const dayName = dayNames[date.getDay()];
+      
+      // Cari revenue untuk tanggal ini
+      const dayRevenue = weeklyRevenue.find(r => r.date === dateString);
+      
+      chartData.push({
+        name: dayName,
+        Pendapatan: dayRevenue ? parseFloat(dayRevenue.revenue) : 0,
+        date: dateString,
+      });
+    }
+
     const [revenueToday, bookingsToday, upcomingBookings, serviceCount] =
       await Promise.all([
         Booking.sum("total_price", {
@@ -407,6 +452,7 @@ exports.getBarbershopKpis = async (req, res) => {
       bookingsToday: bookingsToday || 0,
       upcomingBookings: upcomingBookings || 0,
       serviceCount: serviceCount || 0,
+      weeklyChart: chartData, // ✅ Tambahkan data chart
     });
   } catch (error) {
     console.error("GET KPI ERROR:", error);
