@@ -29,17 +29,15 @@ const Booking = require("../models/Booking.model");
 
 exports.getAllApprovedBarbershops = async (req, res) => {
   try {
-    // Ambil parameter dari query string
     const { latitude, longitude, max_distance } = req.query;
 
-    // Jika koordinat dan jarak maksimum diberikan, tambahkan logika jarak
+    // Jika koordinat dan jarak maksimum diberikan → cari berdasarkan jarak
     if (latitude && longitude) {
       const lat = parseFloat(latitude);
       const lon = parseFloat(longitude);
-      // Default 500m jika tidak disebutkan, pastikan max_distance positif
       const maxDist = max_distance
         ? Math.max(parseFloat(max_distance), 0)
-        : 0.5;
+        : 0.5; // default 500 meter = 0.5 km
 
       if (
         isNaN(lat) ||
@@ -50,67 +48,110 @@ exports.getAllApprovedBarbershops = async (req, res) => {
         lon < -180 ||
         lon > 180
       ) {
-        return res
-          .status(400)
-          .json({
-            message:
-              "Parameter latitude, longitude, atau max_distance tidak valid.",
-          });
+        return res.status(400).json({
+          message: "Parameter latitude, longitude, atau max_distance tidak valid.",
+        });
       }
 
-      // Query raw untuk menghitung jarak dan memfilter
-      // R = 6371 km adalah jari-jari bumi
+      // 🔍 Raw query dengan agregasi review
       const rawQuery = `
-                SELECT *,
-                       (6371 * acos(
-                           cos(radians(:lat)) *
-                           cos(radians(CAST(latitude AS DECIMAL(10,8)))) *
-                           cos(radians(CAST(longitude AS DECIMAL(11,8))) - radians(:lon)) +
-                           sin(radians(:lat)) *
-                           sin(radians(CAST(latitude AS DECIMAL(10,8))))
-                       )) AS distance_km
-                FROM barbershops
-                WHERE approval_status = 'approved'
-                  AND latitude IS NOT NULL
-                  AND longitude IS NOT NULL
-                HAVING distance_km <= :maxDist
-                ORDER BY distance_km ASC;
-            `;
+        SELECT 
+          b.*,
+          (6371 * acos(
+            cos(radians(:lat)) *
+            cos(radians(CAST(b.latitude AS DECIMAL(10,8)))) *
+            cos(radians(CAST(b.longitude AS DECIMAL(11,8))) - radians(:lon)) +
+            sin(radians(:lat)) *
+            sin(radians(CAST(b.latitude AS DECIMAL(10,8))))
+          )) AS distance_km,
+          COALESCE(r_stats.avg_rating, 0) AS average_rating,
+          COALESCE(r_stats.review_count, 0) AS review_count
+        FROM barbershops b
+        LEFT JOIN (
+          SELECT 
+            barbershop_id,
+            AVG(rating) AS avg_rating,
+            COUNT(review_id) AS review_count
+          FROM reviews
+          WHERE status = 'approved'
+          GROUP BY barbershop_id
+        ) r_stats ON b.barbershop_id = r_stats.barbershop_id
+        WHERE b.approval_status = 'approved'
+          AND b.latitude IS NOT NULL
+          AND b.longitude IS NOT NULL
+        HAVING distance_km <= :maxDist
+        ORDER BY distance_km ASC;
+      `;
 
       const rawResults = await sequelize.query(rawQuery, {
-        replacements: { lat: lat, lon: lon, maxDist: maxDist },
+        replacements: { lat, lon, maxDist },
         type: sequelize.QueryTypes.SELECT,
       });
 
-      // Filter kolom yang tidak diinginkan dan pastikan tipe data sesuai
       const resultsWithDistance = rawResults.map((shop) => {
-        const { latitude, longitude, distance_km, ...filteredShop } = shop;
-        // Hapus latitude/longitude dari response jika tidak diperlukan di frontend untuk privasi atau kebersihan data
-        // Jika kamu ingin menampilkannya di frontend, hapus dua baris berikut:
+        const {
+          latitude,
+          longitude,
+          distance_km,
+          average_rating,
+          review_count,
+          ...filteredShop
+        } = shop;
+
+        // Opsional: hapus koordinat dari respons untuk keamanan/kebersihan
         delete filteredShop.latitude;
         delete filteredShop.longitude;
-        // Tambahkan jarak, pastikan tipe datanya benar
-        filteredShop.distance_km = parseFloat(distance_km.toFixed(2)); // Bulatkan ke 2 desimal
-        return filteredShop;
+
+        return {
+          ...filteredShop,
+          distance_km: parseFloat(parseFloat(distance_km).toFixed(2)),
+          average_rating: parseFloat(parseFloat(average_rating).toFixed(1)),
+          review_count: parseInt(review_count, 10) || 0,
+        };
       });
 
-      res.status(200).json(resultsWithDistance);
-      return; // Hentikan eksekusi fungsi setelah mengirim response untuk filter jarak
+      return res.status(200).json(resultsWithDistance);
     }
 
-    // Jika tidak ada filter jarak, kembalikan semua barbershop yang disetujui seperti biasa
-    const barbershops = await Barbershop.findAll({
-      where: { approval_status: "approved" },
-      attributes: [
-        "barbershop_id",
-        "name",
-        "address",
-        "city",
-        "main_image_url",
-      ],
+    // 📋 Jika TIDAK ada koordinat → ambil semua barbershop approved + review stats
+    const rawQueryAll = `
+      SELECT 
+        b.*,
+        COALESCE(r_stats.avg_rating, 0) AS average_rating,
+        COALESCE(r_stats.review_count, 0) AS review_count
+      FROM barbershops b
+      LEFT JOIN (
+        SELECT 
+          barbershop_id,
+          AVG(rating) AS avg_rating,
+          COUNT(review_id) AS review_count
+        FROM reviews
+        WHERE status = 'approved'
+        GROUP BY barbershop_id
+      ) r_stats ON b.barbershop_id = r_stats.barbershop_id
+      WHERE b.approval_status = 'approved'
+      ORDER BY b.createdAt DESC;
+    `;
+
+    const rawResultsAll = await sequelize.query(rawQueryAll, {
+      type: sequelize.QueryTypes.SELECT,
     });
 
-    res.status(200).json(barbershops);
+    const resultsAll = rawResultsAll.map((shop) => {
+      const { latitude, longitude, average_rating, review_count, ...filteredShop } = shop;
+
+      // Opsional: hapus koordinat
+      delete filteredShop.latitude;
+      delete filteredShop.longitude;
+
+      return {
+        ...filteredShop,
+        average_rating: parseFloat(parseFloat(average_rating).toFixed(1)),
+        review_count: parseInt(review_count, 10) || 0,
+      };
+    });
+
+    res.status(200).json(resultsAll);
   } catch (error) {
     console.error("GET ALL BARBERSHOPS ERROR:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
