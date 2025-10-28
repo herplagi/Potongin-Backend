@@ -850,3 +850,69 @@ exports.updateBarbershopDescription = async (req, res) => {
     });
   }
 };
+
+exports.getWeeklyChartData = async (req, res) => {
+  try {
+    const ownerId = req.user.id;
+    const { barbershopId } = req.params;
+
+    const barbershop = await Barbershop.findOne({
+      where: { barbershop_id: barbershopId, owner_id: ownerId },
+    });
+
+    if (!barbershop) {
+      return res.status(403).json({ message: "Akses ditolak." });
+    }
+
+    // Ambil data 7 hari terakhir
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 6); // 7 hari termasuk hari ini
+
+    // Query booking completed dengan group by date
+    const bookings = await Booking.findAll({
+      where: {
+        barbershop_id: barbershopId,
+        status: 'completed',
+        payment_status: 'paid',
+        updatedAt: {
+          [Op.between]: [startDate, endDate]
+        }
+      },
+      attributes: [
+        [sequelize.fn('DATE', sequelize.col('updatedAt')), 'date'],
+        [sequelize.fn('SUM', sequelize.col('total_price')), 'revenue'],
+        [sequelize.fn('COUNT', sequelize.col('booking_id')), 'count']
+      ],
+      group: [sequelize.fn('DATE', sequelize.col('updatedAt'))],
+      raw: true
+    });
+
+    // Buat array untuk 7 hari terakhir
+    const chartData = [];
+    const dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+    
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      const dayName = dayNames[date.getDay()];
+
+      // Cari data booking untuk tanggal ini
+      const dayData = bookings.find(b => b.date === dateStr);
+
+      chartData.push({
+        name: dayName,
+        date: dateStr,
+        Pendapatan: dayData ? parseInt(dayData.revenue) : 0,
+        Transaksi: dayData ? parseInt(dayData.count) : 0
+      });
+    }
+
+    res.status(200).json(chartData);
+  } catch (error) {
+    console.error("GET WEEKLY CHART DATA ERROR:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+

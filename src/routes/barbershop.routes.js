@@ -103,6 +103,13 @@ router.post(
   BarbershopController.uploadMainImage
 );
 
+router.get(
+  "/:barbershopId/chart-data",
+  ownerMiddleware,
+  BarbershopController.getWeeklyChartData
+);
+
+
 router.get("/:barbershopId/gallery", BarbershopController.getGalleryImages);
 
 // Mount nested routes dengan :barbershopId
