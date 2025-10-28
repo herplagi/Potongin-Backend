@@ -1,4 +1,4 @@
-// src/controllers/review.controller.js
+// src/controllers/review.controller.js - FIXED VERSION
 const Review = require("../models/Review.model");
 const Booking = require("../models/Booking.model");
 const User = require("../models/User.model");
@@ -8,20 +8,16 @@ const { Op } = require("sequelize");
 
 // ===== CUSTOMER FUNCTIONS =====
 
-/**
- * Check if customer can review a specific booking
- */
 exports.checkCanReview = async (req, res) => {
   try {
     const { booking_id } = req.params;
     const customerId = req.user.id;
 
-    // Check if booking exists and belongs to customer
     const booking = await Booking.findOne({
       where: {
         booking_id,
         customer_id: customerId,
-        status: "completed", // Only completed bookings can be reviewed
+        status: "completed",
       },
     });
 
@@ -32,7 +28,6 @@ exports.checkCanReview = async (req, res) => {
       });
     }
 
-    // Check if review already exists
     const existingReview = await Review.findOne({
       where: { booking_id },
     });
@@ -56,20 +51,15 @@ exports.checkCanReview = async (req, res) => {
   }
 };
 
-/**
- * Create a new review
- */
 exports.createReview = async (req, res) => {
   try {
     const customerId = req.user.id;
     const { booking_id, rating, title, comment } = req.body;
 
-    // Validate rating
     if (!rating || rating < 1 || rating > 5) {
       return res.status(400).json({ message: "Rating harus antara 1-5" });
     }
 
-    // Check if booking exists and belongs to customer
     const booking = await Booking.findOne({
       where: {
         booking_id,
@@ -84,7 +74,6 @@ exports.createReview = async (req, res) => {
       });
     }
 
-    // Check if review already exists
     const existingReview = await Review.findOne({
       where: { booking_id },
     });
@@ -95,15 +84,14 @@ exports.createReview = async (req, res) => {
       });
     }
 
-    // Create review
     const newReview = await Review.create({
       booking_id,
       customer_id: customerId,
       barbershop_id: booking.barbershop_id,
       rating,
-      title: title || `Review untuk ${booking.barbershop_id}`,
-      comment: comment || "",
-      status: "approved", // Auto-approve for now, can be changed to 'pending'
+      title: title || null,
+      comment: comment || null,
+      status: "approved", // Auto-approve
     });
 
     res.status(201).json({
@@ -116,9 +104,6 @@ exports.createReview = async (req, res) => {
   }
 };
 
-/**
- * Get customer's own reviews
- */
 exports.getMyReviews = async (req, res) => {
   try {
     const customerId = req.user.id;
@@ -152,9 +137,6 @@ exports.getMyReviews = async (req, res) => {
 
 // ===== PUBLIC FUNCTIONS =====
 
-/**
- * Get public reviews for a barbershop (for customer app preview)
- */
 exports.getPublicBarbershopReviews = async (req, res) => {
   try {
     const { barbershopId } = req.params;
@@ -169,7 +151,7 @@ exports.getPublicBarbershopReviews = async (req, res) => {
         {
           model: User,
           as: "customer",
-          attributes: ["name"], // Only show customer name
+          attributes: ["name"],
         },
       ],
       order: [["createdAt", "DESC"]],
@@ -177,7 +159,6 @@ exports.getPublicBarbershopReviews = async (req, res) => {
       offset: parseInt(offset),
     });
 
-    // Calculate average rating
     const avgRating = await Review.findOne({
       where: {
         barbershop_id: barbershopId,
@@ -211,17 +192,11 @@ exports.getPublicBarbershopReviews = async (req, res) => {
 
 // ===== OWNER FUNCTIONS =====
 
-/**
- * Get reviews for owner's barbershop
- */
 exports.getOwnerBarbershopReviews = async (req, res) => {
   try {
     const { barbershopId } = req.params;
     const ownerId = req.user.id;
 
-    console.log("🔍 Fetching reviews for:", { barbershopId, ownerId });
-
-    // Verify ownership
     const barbershop = await Barbershop.findOne({
       where: {
         barbershop_id: barbershopId,
@@ -230,14 +205,14 @@ exports.getOwnerBarbershopReviews = async (req, res) => {
     });
 
     if (!barbershop) {
-      console.log("❌ Barbershop not found or access denied");
       return res.status(403).json({ message: "Akses ditolak" });
     }
 
-    console.log("✅ Barbershop verified:", barbershop.name);
-
     const reviews = await Review.findAll({
-      where: { barbershop_id: barbershopId },
+      where: { 
+        barbershop_id: barbershopId,
+        status: 'approved' // Owner hanya lihat yang approved
+      },
       include: [
         {
           model: User,
@@ -257,12 +232,9 @@ exports.getOwnerBarbershopReviews = async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    console.log("📊 Reviews found:", reviews.length);
-
-    // ✅ Always return array
     res.status(200).json(reviews || []);
   } catch (error) {
-    console.error("❌ Get owner reviews error:", error);
+    console.error("Get owner reviews error:", error);
     res.status(500).json({
       message: "Server error",
       error: error.message,
@@ -272,14 +244,13 @@ exports.getOwnerBarbershopReviews = async (req, res) => {
 
 // ===== ADMIN FUNCTIONS =====
 
-/**
- * Get all reviews (for admin dashboard)
- */
 exports.getAllReviews = async (req, res) => {
   try {
-    const { status, limit = 50, offset = 0 } = req.query;
+    const { status, limit = 100, offset = 0 } = req.query;
 
-    const whereClause = status ? { status } : {};
+    console.log('📊 GET ALL REVIEWS - Params:', { status, limit, offset });
+
+    const whereClause = status && status !== 'all' ? { status } : {};
 
     const reviews = await Review.findAll({
       where: whereClause,
@@ -293,32 +264,35 @@ exports.getAllReviews = async (req, res) => {
           model: Barbershop,
           attributes: ["name", "city"],
         },
+        {
+          model: Booking,
+          include: [
+            {
+              model: Service,
+              attributes: ["name"],
+            },
+          ],
+        },
       ],
       order: [["createdAt", "DESC"]],
       limit: parseInt(limit),
       offset: parseInt(offset),
     });
 
+    console.log('✅ Reviews found:', reviews.length);
     res.status(200).json(reviews);
   } catch (error) {
-    console.error("Get all reviews error:", error);
+    console.error("❌ Get all reviews error:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-/**
- * Get review statistics
- */
 exports.getReviewStats = async (req, res) => {
   try {
     const totalReviews = await Review.count();
-    const approvedReviews = await Review.count({
-      where: { is_approved: true },
-    });
-    const rejectedReviews = await Review.count({
-      where: { is_approved: false },
-    });
-    const pendingReviews = await Review.count({ where: { is_approved: null } });
+    const approvedReviews = await Review.count({ where: { status: "approved" } });
+    const rejectedReviews = await Review.count({ where: { status: "rejected" } });
+    const pendingReviews = await Review.count({ where: { status: "pending" } });
 
     const avgRating = await Review.findOne({
       attributes: [
@@ -343,18 +317,17 @@ exports.getReviewStats = async (req, res) => {
   }
 };
 
-/**
- * Moderate review (approve/reject)
- */
 exports.moderateReview = async (req, res) => {
   try {
     const { reviewId } = req.params;
-    const { status, rejection_reason } = req.body;
+    const { status, rejection_reason, admin_note, is_flagged } = req.body;
     const adminId = req.user.id;
 
-    if (!["approved", "rejected"].includes(status)) {
+    console.log('🔧 MODERATE REVIEW:', { reviewId, status, adminId });
+
+    if (!["approved", "rejected", "pending"].includes(status)) {
       return res.status(400).json({
-        message: "Status harus approved atau rejected",
+        message: "Status harus approved, rejected, atau pending",
       });
     }
 
@@ -363,30 +336,45 @@ exports.moderateReview = async (req, res) => {
       return res.status(404).json({ message: "Review tidak ditemukan" });
     }
 
-    await review.update({
+    const updateData = {
       status,
-      rejection_reason: status === "rejected" ? rejection_reason : null,
-      verified_by: adminId,
-    });
+      moderated_by: adminId,
+      moderated_at: new Date(),
+    };
+
+    if (rejection_reason) {
+      updateData.rejection_reason = rejection_reason;
+    }
+
+    if (admin_note) {
+      updateData.admin_note = admin_note;
+    }
+
+    if (is_flagged !== undefined) {
+      updateData.is_flagged = is_flagged;
+    }
+
+    await review.update(updateData);
+
+    console.log('✅ Review moderated successfully');
 
     res.status(200).json({
       message: `Review berhasil di-${
-        status === "approved" ? "setujui" : "tolak"
+        status === "approved" ? "setujui" : status === "rejected" ? "tolak" : "update"
       }`,
       review,
     });
   } catch (error) {
-    console.error("Moderate review error:", error);
+    console.error("❌ Moderate review error:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-/**
- * Delete review
- */
 exports.deleteReview = async (req, res) => {
   try {
     const { reviewId } = req.params;
+
+    console.log('🗑️ DELETE REVIEW:', reviewId);
 
     const review = await Review.findByPk(reviewId);
     if (!review) {
@@ -395,9 +383,11 @@ exports.deleteReview = async (req, res) => {
 
     await review.destroy();
 
+    console.log('✅ Review deleted successfully');
+
     res.status(200).json({ message: "Review berhasil dihapus" });
   } catch (error) {
-    console.error("Delete review error:", error);
+    console.error("❌ Delete review error:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };

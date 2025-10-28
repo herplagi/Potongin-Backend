@@ -1,4 +1,4 @@
-// src/models/Review.model.js
+// src/models/Review.model.js - FIXED VERSION
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const User = require('./User.model');
@@ -14,7 +14,7 @@ const Review = sequelize.define('Review', {
     booking_id: {
         type: DataTypes.UUID,
         allowNull: false,
-        unique: true, // Satu booking hanya bisa direview sekali
+        unique: true,
         references: { model: 'bookings', key: 'booking_id' }
     },
     customer_id: {
@@ -36,15 +36,20 @@ const Review = sequelize.define('Review', {
         },
         comment: 'Rating 1-5 bintang'
     },
+    title: {
+        type: DataTypes.STRING,
+        allowNull: true,
+    },
     comment: {
         type: DataTypes.TEXT,
         allowNull: true,
     },
-    // Admin moderation fields
-    is_approved: {
-        type: DataTypes.BOOLEAN,
-        defaultValue: true, // Auto-approve by default
-        comment: 'Admin dapat moderate review'
+    // ✅ FIXED: Gunakan status enum, hapus is_approved
+    status: {
+        type: DataTypes.ENUM('pending', 'approved', 'rejected'),
+        defaultValue: 'approved', // Auto-approve by default
+        allowNull: false,
+        comment: 'Status moderasi review'
     },
     is_flagged: {
         type: DataTypes.BOOLEAN,
@@ -55,6 +60,11 @@ const Review = sequelize.define('Review', {
         type: DataTypes.TEXT,
         allowNull: true,
         comment: 'Catatan dari admin'
+    },
+    rejection_reason: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        comment: 'Alasan penolakan jika ditolak'
     },
     moderated_by: {
         type: DataTypes.UUID,
