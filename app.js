@@ -23,6 +23,7 @@ const staffRoutes = require('./src/routes/staff.routes');
 const bookingRoutes = require('./src/routes/booking.routes');
 const notificationRoutes = require('./src/routes/notification.routes');
 const reviewRoutes = require('./src/routes/review.routes');
+const scheduleRoutes = require('./src/routes/schedule.routes');
 
 const bookingController = require('./src/controllers/booking.controller');
 

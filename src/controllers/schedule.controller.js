@@ -1,158 +1,146 @@
-// // src/controllers/schedule.controller.js
-// const Barbershop = require('../models/Barbershop.model');
-// const BarbershopSchedule = require('../models/BarbershopSchedule.model');
+// src/controllers/schedule.controller.js
+const Barbershop = require('../models/Barbershop.model');
 
-// // Helper function untuk verifikasi kepemilikan
-// const verifyOwnership = async (ownerId, barbershopId) => {
-//     const barbershop = await Barbershop.findOne({
-//         where: { barbershop_id: barbershopId, owner_id: ownerId }
-//     });
+// Helper function untuk verifikasi kepemilikan
+const verifyOwnership = async (ownerId, barbershopId) => {
+    const barbershop = await Barbershop.findOne({
+        where: { barbershop_id: barbershopId, owner_id: ownerId }
+    });
 
-//     if (!barbershop) {
-//         throw new Error('Barbershop tidak ditemukan atau Anda tidak punya hak akses.');
-//     }
+    if (!barbershop) {
+        throw new Error('Barbershop tidak ditemukan atau Anda tidak punya hak akses.');
+    }
 
-//     if (barbershop.approval_status !== 'approved') {
-//         throw new Error('Barbershop belum disetujui oleh admin.');
-//     }
+    if (barbershop.approval_status !== 'approved') {
+        throw new Error('Barbershop belum disetujui oleh admin.');
+    }
 
-//     return barbershop;
-// };
+    return barbershop;
+};
 
-// // ✅ Get schedule untuk barbershop
-// exports.getSchedule = async (req, res) => {
-//     try {
-//         const { barbershopId } = req.params;
-//         const ownerId = req.user.id;
+// ✅ Get schedule dari opening_hours
+exports.getSchedule = async (req, res) => {
+    try {
+        const { barbershopId } = req.params;
+        const ownerId = req.user.id;
 
-//         await verifyOwnership(ownerId, barbershopId);
+        const barbershop = await verifyOwnership(ownerId, barbershopId);
 
-//         const schedules = await BarbershopSchedule.findAll({
-//             where: { barbershop_id: barbershopId },
-//             order: [
-//                 [
-//                     sequelize.literal(`FIELD(day_of_week, 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu')`)
-//                 ]
-//             ]
-//         });
+        // Parse opening_hours dari JSON
+        let openingHours = barbershop.opening_hours;
+        if (typeof openingHours === 'string') {
+            openingHours = JSON.parse(openingHours);
+        }
 
-//         // Jika belum ada schedule, buat default
-//         if (schedules.length === 0) {
-//             const defaultSchedules = await createDefaultSchedules(barbershopId);
-//             return res.status(200).json(defaultSchedules);
-//         }
+        // Format menjadi array untuk kemudahan di frontend
+        const schedules = Object.entries(openingHours).map(([day, schedule]) => ({
+            day_of_week: day,
+            open_time: schedule.buka || null,
+            close_time: schedule.tutup || null,
+            is_open: schedule.aktif || false
+        }));
 
-//         res.status(200).json(schedules);
-//     } catch (error) {
-//         console.error('Get schedule error:', error);
-//         res.status(403).json({ message: error.message });
-//     }
-// };
+        // Sort berdasarkan urutan hari
+        const dayOrder = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+        schedules.sort((a, b) => dayOrder.indexOf(a.day_of_week) - dayOrder.indexOf(b.day_of_week));
 
-// // ✅ Update schedule (batch update untuk semua hari)
-// exports.updateSchedule = async (req, res) => {
-//     try {
-//         const { barbershopId } = req.params;
-//         const ownerId = req.user.id;
-//         const { schedules } = req.body; // Array of schedule objects
+        res.status(200).json(schedules);
+    } catch (error) {
+        console.error('Get schedule error:', error);
+        res.status(403).json({ message: error.message });
+    }
+};
 
-//         await verifyOwnership(ownerId, barbershopId);
+// ✅ Update schedule (batch update untuk semua hari)
+exports.updateSchedule = async (req, res) => {
+    try {
+        const { barbershopId } = req.params;
+        const ownerId = req.user.id;
+        const { schedules } = req.body;
 
-//         if (!Array.isArray(schedules)) {
-//             return res.status(400).json({ message: 'Schedules harus berupa array' });
-//         }
+        const barbershop = await verifyOwnership(ownerId, barbershopId);
 
-//         // Update atau create untuk setiap hari
-//         const updatePromises = schedules.map(async (schedule) => {
-//             const { day_of_week, open_time, close_time, is_open } = schedule;
+        if (!Array.isArray(schedules)) {
+            return res.status(400).json({ message: 'Schedules harus berupa array' });
+        }
 
-//             return await BarbershopSchedule.upsert({
-//                 barbershop_id: barbershopId,
-//                 day_of_week,
-//                 open_time: is_open ? open_time : null,
-//                 close_time: is_open ? close_time : null,
-//                 is_open
-//             }, {
-//                 conflictFields: ['barbershop_id', 'day_of_week']
-//             });
-//         });
+        // Convert array schedules ke format opening_hours
+        const newOpeningHours = {};
+        
+        schedules.forEach(schedule => {
+            const { day_of_week, open_time, close_time, is_open } = schedule;
+            
+            newOpeningHours[day_of_week] = {
+                buka: is_open ? (open_time || '09:00') : '',
+                tutup: is_open ? (close_time || '21:00') : '',
+                aktif: is_open
+            };
+        });
 
-//         await Promise.all(updatePromises);
+        // Update barbershop
+        await barbershop.update({
+            opening_hours: newOpeningHours
+        });
 
-//         // Fetch updated schedules
-//         const updatedSchedules = await BarbershopSchedule.findAll({
-//             where: { barbershop_id: barbershopId },
-//             order: [
-//                 [
-//                     sequelize.literal(`FIELD(day_of_week, 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu')`)
-//                 ]
-//             ]
-//         });
+        // Return formatted schedules
+        const updatedSchedules = Object.entries(newOpeningHours).map(([day, schedule]) => ({
+            day_of_week: day,
+            open_time: schedule.buka || null,
+            close_time: schedule.tutup || null,
+            is_open: schedule.aktif || false
+        }));
 
-//         res.status(200).json({
-//             message: 'Jadwal berhasil diperbarui',
-//             schedules: updatedSchedules
-//         });
-//     } catch (error) {
-//         console.error('Update schedule error:', error);
-//         res.status(500).json({ message: 'Server error', error: error.message });
-//     }
-// };
+        const dayOrder = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+        updatedSchedules.sort((a, b) => dayOrder.indexOf(a.day_of_week) - dayOrder.indexOf(b.day_of_week));
 
-// // ✅ Update single day schedule
-// exports.updateSingleDay = async (req, res) => {
-//     try {
-//         const { barbershopId, scheduleId } = req.params;
-//         const ownerId = req.user.id;
-//         const { open_time, close_time, is_open } = req.body;
+        res.status(200).json({
+            message: 'Jadwal berhasil diperbarui',
+            schedules: updatedSchedules
+        });
+    } catch (error) {
+        console.error('Update schedule error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
 
-//         await verifyOwnership(ownerId, barbershopId);
+// ✅ Update single day schedule
+exports.updateSingleDay = async (req, res) => {
+    try {
+        const { barbershopId } = req.params;
+        const ownerId = req.user.id;
+        const { day_of_week, open_time, close_time, is_open } = req.body;
 
-//         const schedule = await BarbershopSchedule.findOne({
-//             where: {
-//                 schedule_id: scheduleId,
-//                 barbershop_id: barbershopId
-//             }
-//         });
+        const barbershop = await verifyOwnership(ownerId, barbershopId);
 
-//         if (!schedule) {
-//             return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
-//         }
+        // Get current opening_hours
+        let openingHours = barbershop.opening_hours;
+        if (typeof openingHours === 'string') {
+            openingHours = JSON.parse(openingHours);
+        }
 
-//         await schedule.update({
-//             open_time: is_open ? open_time : null,
-//             close_time: is_open ? close_time : null,
-//             is_open
-//         });
+        // Update specific day
+        openingHours[day_of_week] = {
+            buka: is_open ? (open_time || '09:00') : '',
+            tutup: is_open ? (close_time || '21:00') : '',
+            aktif: is_open
+        };
 
-//         res.status(200).json({
-//             message: 'Jadwal berhasil diperbarui',
-//             schedule
-//         });
-//     } catch (error) {
-//         console.error('Update single day error:', error);
-//         res.status(500).json({ message: 'Server error', error: error.message });
-//     }
-// };
+        // Save
+        await barbershop.update({
+            opening_hours: openingHours
+        });
 
-// // Helper function untuk membuat default schedules
-// async function createDefaultSchedules(barbershopId) {
-//     const days = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
-//     const defaultSchedules = [];
-
-//     for (const day of days) {
-//         const schedule = await BarbershopSchedule.create({
-//             barbershop_id: barbershopId,
-//             day_of_week: day,
-//             open_time: day === 'Minggu' ? null : '09:00:00',
-//             close_time: day === 'Minggu' ? null : '21:00:00',
-//             is_open: day !== 'Minggu'
-//         });
-//         defaultSchedules.push(schedule);
-//     }
-
-//     return defaultSchedules;
-// }
-
-// // Import sequelize untuk ordering
-// const sequelize = require('../config/database');
+        res.status(200).json({
+            message: 'Jadwal berhasil diperbarui',
+            schedule: {
+                day_of_week,
+                open_time: is_open ? open_time : null,
+                close_time: is_open ? close_time : null,
+                is_open
+            }
+        });
+    } catch (error) {
+        console.error('Update single day error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
