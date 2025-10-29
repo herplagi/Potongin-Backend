@@ -487,7 +487,9 @@ exports.expirePendingBookings = async () => {
 
 exports.checkStaffAvailability = async (req, res) => {
     try {
-        const { barbershop_id, date, time } = req.query; // Ambil dari query string
+        const { barbershop_id, date, time } = req.query;
+
+        console.log('🔍 CHECK AVAILABILITY REQUEST:', { barbershop_id, date, time });
 
         // Validasi parameter dasar
         if (!barbershop_id || !date) {
@@ -499,7 +501,6 @@ exports.checkStaffAvailability = async (req, res) => {
         if (isNaN(parsedDate.getTime())) {
             return res.status(400).json({ message: 'Format tanggal tidak valid.' });
         }
-        // Format tanggal menjadi YYYY-MM-DD untuk konsistensi
         const formattedDate = parsedDate.toISOString().split('T')[0];
 
         // --- LOGIKA UNTUK MENCARI WAKTU PENUH (SEMUA STAFF DIBOOKING) ---
@@ -507,82 +508,92 @@ exports.checkStaffAvailability = async (req, res) => {
             console.log(`📅 Memeriksa waktu penuh untuk barbershop ${barbershop_id} pada tanggal ${formattedDate}`);
             
             try {
-                // 1. Dapatkan semua staff di barbershop
-                const allStaff = await Staff.findAll({ 
-                    where: { barbershop_id },
-                    attributes: ['staff_id'] // Hanya ambil staff_id untuk efisiensi
+                // 1. Dapatkan HANYA staff yang AKTIF di barbershop
+                const activeStaff = await Staff.findAll({ 
+                    where: { 
+                        barbershop_id,
+                        is_active: true  // ✅ FILTER HANYA STAFF AKTIF
+                    },
+                    attributes: ['staff_id', 'name']
                 });
                 
-                if (!allStaff || allStaff.length === 0) {
-                    console.log("Tidak ada staff terdaftar di barbershop ini!");
+                if (!activeStaff || activeStaff.length === 0) {
+                    console.log("❌ Tidak ada staff AKTIF di barbershop ini!");
                     return res.status(200).json({ fully_booked_times: [] }); 
                 }
                 
-                const totalStaffCount = allStaff.length;
-                console.log(`👨‍💼 Total staff ditemukan: ${totalStaffCount}`);
+                const totalActiveStaffCount = activeStaff.length;
+                console.log(`👨‍💼 Total staff AKTIF: ${totalActiveStaffCount}`, activeStaff.map(s => s.name));
 
                 // 2. Dapatkan jam buka barbershop untuk tanggal tersebut
-                //    Anda perlu logika untuk mendapatkan jam buka dari model Barbershop.
-                //    Untuk contoh ini, kita akan menggunakan jam tetap.
-                //    *** GANTILAH BAGIAN INI DENGAN LOGIKA SEBENARNYA ***
-                // -------------------------------------------------------------------
-                // CONTOH LOGIKA MENDAPATKAN JAM BUKA (GANTI DENGAN YANG SEBENARNYA):
-                // const barbershopDetails = await Barbershop.findByPk(barbershop_id);
-                // if (!barbershopDetails) {
-                //     return res.status(404).json({ message: 'Barbershop tidak ditemukan.' });
-                // }
-                // const dayOfWeek = new Date(formattedDate).toLocaleDateString('id-ID', { weekday: 'long' });
-                // const hoursObject = typeof barbershopDetails.opening_hours === 'string' 
-                //     ? JSON.parse(barbershopDetails.opening_hours) 
-                //     : barbershopDetails.opening_hours;
-                // const dayInfo = hoursObject[dayOfWeek];
-                // if (!dayInfo || !dayInfo.aktif) {
-                //     return res.status(200).json({ fully_booked_times: [] }); // Tutup hari itu
-                // }
-                // const startHour = dayInfo.buka; // Misal: "09:00"
-                // const endHour = dayInfo.tutup;   // Misal: "21:00"
-                // -------------------------------------------------------------------
+                const barbershopDetails = await Barbershop.findByPk(barbershop_id);
+                if (!barbershopDetails) {
+                    return res.status(404).json({ message: 'Barbershop tidak ditemukan.' });
+                }
 
-                // *** CONTOH SEMENTARA: Gunakan jam tetap ***
-                const startHour = '09:00'; 
-                const endHour = '21:00';   
-                const intervalMinutes = 60; 
-                // -------------------------------------------
+                const dayOfWeek = new Date(formattedDate).toLocaleDateString('id-ID', { weekday: 'long' });
+                let hoursObject;
+                try {
+                    hoursObject = typeof barbershopDetails.opening_hours === 'string' 
+                        ? JSON.parse(barbershopDetails.opening_hours) 
+                        : barbershopDetails.opening_hours;
+                } catch (e) {
+                    console.error('❌ Error parsing opening_hours:', e);
+                    return res.status(500).json({ message: 'Data jam buka barbershop tidak valid.' });
+                }
+
+                const dayInfo = hoursObject[dayOfWeek];
+                if (!dayInfo || !dayInfo.aktif) {
+                    console.log(`🚫 Barbershop tutup pada hari ${dayOfWeek}`);
+                    return res.status(200).json({ fully_booked_times: [] });
+                }
+
+                const startHour = dayInfo.buka;
+                const endHour = dayInfo.tutup;
+                const intervalMinutes = 60;
+
+                console.log(`⏰ Jam operasional ${dayOfWeek}: ${startHour} - ${endHour}`);
 
                 // 3. Buat daftar slot waktu berdasarkan jam buka
                 const timeSlots = generateTimeSlots(startHour, endHour, intervalMinutes);
-                console.log(`🕒 Slot waktu yang dihasilkan: ${timeSlots.join(', ')}`);
+                console.log(`🕒 Slot waktu: ${timeSlots.length} slots`);
 
                 const fullyBookedTimes = [];
+                const activeStaffIds = activeStaff.map(s => s.staff_id);
 
-                // 4. Untuk setiap slot waktu, hitung staff yang tersedia
+                // 4. Untuk setiap slot waktu, hitung staff AKTIF yang tersedia
                 for (const slotTime of timeSlots) {
-                    const slotDateTimeStart = new Date(`${formattedDate}T${slotTime}:00+07:00`); // Tambahkan +07:00 untuk WIB
+                    const slotDateTimeStart = new Date(`${formattedDate}T${slotTime}:00+07:00`);
                     const slotDateTimeEnd = new Date(slotDateTimeStart.getTime() + intervalMinutes * 60000);
 
-                    // Cari booking yang konflik pada slot waktu ini
+                    // ✅ HANYA CEK BOOKING UNTUK STAFF YANG AKTIF
                     const conflictingBookings = await Booking.findAll({
                         where: {
                             barbershop_id: barbershop_id,
+                            staff_id: { [Op.in]: activeStaffIds },  // ✅ FILTER STAFF AKTIF
                             status: { [Op.ne]: "cancelled" },
                             booking_time: { [Op.lt]: slotDateTimeEnd },
                             end_time: { [Op.gt]: slotDateTimeStart },
                         },
-                        attributes: ['staff_id'], // Hanya ambil staff_id
+                        attributes: ['staff_id', 'booking_id'],
                     });
 
                     const busyStaffCount = conflictingBookings.length;
-                    console.log(`🕒 Memeriksa slot ${slotTime}: ${busyStaffCount} staff sibuk dari ${totalStaffCount} total.`);
+                    console.log(`🕒 Slot ${slotTime}: ${busyStaffCount}/${totalActiveStaffCount} staff aktif sibuk`);
 
-                    // Jika semua staff sibuk, waktu ini penuh
-                    if (busyStaffCount >= totalStaffCount) {
+                    // Jika SEMUA staff AKTIF sibuk, waktu ini penuh
+                    if (busyStaffCount >= totalActiveStaffCount) {
                         fullyBookedTimes.push(slotTime);
-                        console.log(`🕒 Slot ${slotTime} ditandai sebagai penuh.`);
+                        console.log(`🔴 Slot ${slotTime} PENUH (semua staff aktif sibuk)`);
                     }
                 }
 
-                console.log("🕒 Waktu penuh yang ditemukan:", fullyBookedTimes);
-                return res.status(200).json({ fully_booked_times: fullyBookedTimes });
+                console.log("✅ Waktu penuh yang ditemukan:", fullyBookedTimes);
+                return res.status(200).json({ 
+                    fully_booked_times: fullyBookedTimes,
+                    total_active_staff: totalActiveStaffCount,
+                    active_staff: activeStaff.map(s => ({ id: s.staff_id, name: s.name }))
+                });
                 
             } catch (dbError) {
                 console.error("❌ Error saat mencari waktu penuh:", dbError);
@@ -591,55 +602,79 @@ exports.checkStaffAvailability = async (req, res) => {
         }
         // --- AKHIR LOGIKA UNTUK MENCARI WAKTU PENUH ---
 
-        // --- LOGIKA UNTUK MENCARI STAFF YANG TIDAK TERSEDIA (SEPERTI SEBELUMNYA) ---
-        // Jika `time` ada, lanjutkan dengan logika lama
+        // --- LOGIKA UNTUK MENCARI STAFF YANG TIDAK TERSEDIA (UNTUK WAKTU SPESIFIK) ---
         
         // Validasi format waktu
-        const bookingDateTime = new Date(`${formattedDate}T${time}:00+07:00`); // Tambahkan +07:00 untuk WIB
+        const bookingDateTime = new Date(`${formattedDate}T${time}:00+07:00`);
         if (isNaN(bookingDateTime.getTime())) {
             return res.status(400).json({ message: 'Format waktu tidak valid.' });
         }
 
-        console.log(`🔍 Memeriksa ketersediaan staff untuk barbershop ${barbershop_id} pada ${formattedDate} ${time}`);
+        console.log(`🔍 Memeriksa ketersediaan staff untuk ${formattedDate} ${time}`);
 
-        // Hitung waktu mulai dan akhir berdasarkan waktu yang dipilih
-        // (Asumsi durasi layanan rata-rata 60 menit, sesuaikan jika berbeda)
-        const durationInMinutes = 60; // Ganti dengan durasi layanan standar atau ambil dari service_id jika dinamis
+        const durationInMinutes = 60;
         const bookingStartTime = bookingDateTime;
         const bookingEndTime = new Date(bookingStartTime.getTime() + durationInMinutes * 60000);
 
-        // Ambil semua staff di barbershop ini
-        const allStaff = await Staff.findAll({ where: { barbershop_id } });
-        if (!allStaff || allStaff.length === 0) {
-            return res.status(404).json({ message: 'Barbershop ini belum memiliki staff terdaftar.', unavailable_staff_ids: [] });
+        // Ambil HANYA staff yang AKTIF
+        const allActiveStaff = await Staff.findAll({ 
+            where: { 
+                barbershop_id,
+                is_active: true  // ✅ FILTER HANYA STAFF AKTIF
+            },
+            attributes: ['staff_id', 'name']
+        });
+
+        if (!allActiveStaff || allActiveStaff.length === 0) {
+            return res.status(404).json({ 
+                message: 'Barbershop ini belum memiliki staff AKTIF.', 
+                unavailable_staff_ids: [] 
+            });
         }
 
-        // Cari booking yang konflik (status bukan cancelled) pada waktu tersebut
+        console.log(`👨‍💼 Staff aktif di barbershop: ${allActiveStaff.length}`, allActiveStaff.map(s => s.name));
+
+        const activeStaffIds = allActiveStaff.map(s => s.staff_id);
+
+        // Cari booking yang konflik HANYA untuk staff yang AKTIF
         const conflictingBookings = await Booking.findAll({
             where: {
                 barbershop_id: barbershop_id,
-                status: { [Op.ne]: "cancelled" }, // Jangan sertakan booking yang dibatalkan
+                staff_id: { [Op.in]: activeStaffIds },  // ✅ FILTER STAFF AKTIF
+                status: { [Op.ne]: "cancelled" },
                 booking_time: { [Op.lt]: bookingEndTime },
                 end_time: { [Op.gt]: bookingStartTime },
             },
-            attributes: ['staff_id'], // Hanya ambil staff_id
+            attributes: ['staff_id', 'booking_id'],
         });
 
-        // Ekstrak staff_id dari booking yang konflik
         const busyStaffIds = conflictingBookings.map(b => b.staff_id);
-        console.log(`👨‍🔧 Staff yang tidak tersedia : [${busyStaffIds.join(', ')}]`);
+        console.log(`👨‍🔧 Staff AKTIF yang tidak tersedia:`, busyStaffIds);
 
-        // Kembalikan daftar staff_id yang *tidak tersedia*
         res.status(200).json({
-            unavailable_staff_ids: busyStaffIds
+            unavailable_staff_ids: busyStaffIds,
+            total_active_staff: allActiveStaff.length,
+            available_staff_count: allActiveStaff.length - busyStaffIds.length
         });
-        // --- AKHIR LOGIKA UNTUK MENCARI STAFF YANG TIDAK TERSEDIA ---
 
     } catch (error) {
         console.error("❌ Check staff availability error:", error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
+
+function generateTimeSlots(start, end, intervalMinutes) {
+  const slots = [];
+  let currentTime = new Date(`1970-01-01T${start}:00`);
+  const endTime = new Date(`1970-01-01T${end}:00`);
+
+  while (currentTime < endTime) {
+    slots.push(currentTime.toTimeString().substring(0, 5));
+    currentTime.setMinutes(currentTime.getMinutes() + intervalMinutes);
+  }
+  return slots;
+}
+
 
 function generateTimeSlots(start, end, intervalMinutes) {
   const slots = [];
