@@ -18,6 +18,8 @@ router.put('/:staffId', ownerMiddleware, uploadStaffPhoto.single('photo'), Staff
 router.patch('/:staffId/deactivate', ownerMiddleware, StaffController.deactivateStaff);
 router.patch('/:staffId/activate', ownerMiddleware, StaffController.activateStaff);
 
+router.post('/:staffId/reassign', ownerMiddleware, StaffController.reassignBookings);
+
 // Hapus permanen (opsional)
 router.delete('/:staffId', ownerMiddleware, StaffController.deleteStaff);
 

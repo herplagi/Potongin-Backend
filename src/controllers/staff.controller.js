@@ -384,3 +384,127 @@ exports.reassignBookings = async (req, res) => {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
+
+exports.reassignBookings = async (req, res) => {
+    try {
+        const ownerId = req.user.id;
+        const { barbershopId, staffId } = req.params;
+        const { new_staff_id } = req.body;
+
+        console.log('🔄 REASSIGN REQUEST:', { barbershopId, staffId, new_staff_id });
+
+        await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
+
+        if (!new_staff_id) {
+            return res.status(400).json({ message: 'ID staff baru wajib disertakan.' });
+        }
+
+        // ✅ Validasi staff lama exists
+        const oldStaff = await Staff.findOne({
+            where: { 
+                staff_id: staffId, 
+                barbershop_id: barbershopId
+            }
+        });
+
+        if (!oldStaff) {
+            return res.status(404).json({ message: 'Staff tidak ditemukan.' });
+        }
+
+        // ✅ Cek staff baru ada dan aktif
+        const newStaff = await Staff.findOne({
+            where: { 
+                staff_id: new_staff_id, 
+                barbershop_id: barbershopId,
+                is_active: true
+            }
+        });
+
+        if (!newStaff) {
+            return res.status(404).json({ message: 'Staff baru tidak ditemukan atau tidak aktif.' });
+        }
+
+        // ✅ Ambil booking yang akan datang dari staff lama
+        const now = new Date();
+        const affectedBookings = await Booking.findAll({
+            where: {
+                staff_id: staffId,
+                status: {
+                    [Op.in]: ['confirmed', 'pending_payment']
+                },
+                booking_time: {
+                    [Op.gte]: now
+                }
+            },
+            order: [['booking_time', 'ASC']]
+        });
+
+        console.log(`📋 Found ${affectedBookings.length} bookings to reassign`);
+
+        if (affectedBookings.length === 0) {
+            return res.status(200).json({
+                message: 'Tidak ada booking yang perlu dipindahkan',
+                reassigned_count: 0
+            });
+        }
+
+        // ✅ CEK KONFLIK JADWAL DENGAN STAFF BARU
+        const conflicts = [];
+        for (const booking of affectedBookings) {
+            const conflictingBooking = await Booking.findOne({
+                where: {
+                    staff_id: new_staff_id,
+                    status: { [Op.ne]: 'cancelled' },
+                    booking_time: { [Op.lt]: booking.end_time },
+                    end_time: { [Op.gt]: booking.booking_time }
+                }
+            });
+
+            if (conflictingBooking) {
+                conflicts.push({
+                    booking_id: booking.booking_id,
+                    booking_time: booking.booking_time.toLocaleString('id-ID'),
+                    reason: 'Staff baru sudah memiliki booking pada waktu yang sama'
+                });
+            }
+        }
+
+        if (conflicts.length > 0) {
+            console.log('⚠️ CONFLICTS DETECTED:', conflicts);
+            return res.status(409).json({
+                message: 'Beberapa booking tidak dapat dipindahkan karena konflik jadwal',
+                conflicts,
+                successful_count: 0,
+                failed_count: conflicts.length
+            });
+        }
+
+        // ✅ Update semua booking
+        const [updatedCount] = await Booking.update(
+            { staff_id: new_staff_id },
+            {
+                where: {
+                    staff_id: staffId,
+                    status: {
+                        [Op.in]: ['confirmed', 'pending_payment']
+                    },
+                    booking_time: {
+                        [Op.gte]: now
+                    }
+                }
+            }
+        );
+
+        console.log(`✅ Successfully reassigned ${updatedCount} bookings`);
+
+        res.status(200).json({
+            message: `Berhasil memindahkan ${updatedCount} booking dari ${oldStaff.name} ke ${newStaff.name}`,
+            reassigned_count: updatedCount,
+            old_staff: oldStaff.name,
+            new_staff: newStaff.name
+        });
+    } catch (error) {
+        console.error('❌ Reassign bookings error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
