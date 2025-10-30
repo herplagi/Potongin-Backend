@@ -24,6 +24,7 @@ const bookingRoutes = require('./src/routes/booking.routes');
 const notificationRoutes = require('./src/routes/notification.routes');
 const reviewRoutes = require('./src/routes/review.routes');
 const scheduleRoutes = require('./src/routes/schedule.routes');
+const userRoutes = require('./src/routes/user.routes');
 
 const bookingController = require('./src/controllers/booking.controller');
 
@@ -43,7 +44,7 @@ cron.schedule('*/5 * * * *', async () => {
 
 console.log('✅ Cron job untuk cek booking expired telah dijadwalkan (setiap 5 menit).');
 
-sequelize.sync({ alter: true });
+sequelize.sync({});
 
 // Pendaftaran Rute
 app.use('/api/auth', authRoutes);
@@ -54,6 +55,8 @@ app.use('/api/barbershops/:barbershopId/staff', staffRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/users', userRoutes);
+
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
