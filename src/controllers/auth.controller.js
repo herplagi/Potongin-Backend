@@ -119,17 +119,20 @@ exports.forgotPassword = async (req, res) => {
     // Generate random token
     const resetToken = crypto.randomBytes(32).toString('hex');
     
+    // Hash the token before storing it in database for security
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    
     // Set token expiry to 1 hour from now
     const resetTokenExpires = new Date(Date.now() + 3600000); // 1 hour
 
-    // Save token to database
+    // Save hashed token to database
     await user.update({
-      reset_token: resetToken,
+      reset_token: hashedToken,
       reset_token_expires: resetTokenExpires
     });
 
-    // Create reset link
-    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+    // Create reset link with URL-encoded token (though hex is already URL-safe)
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${encodeURIComponent(resetToken)}`;
 
     // Send email
     const mailOptions = {
@@ -170,21 +173,21 @@ exports.resetPassword = async (req, res) => {
       });
     }
 
-    // Find user with valid token
+    // Hash the provided token to compare with stored hash
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Find user with valid token and check expiry in a single query to prevent timing attacks
+    const { Op } = require('sequelize');
     const user = await User.findOne({
       where: {
-        reset_token: token
+        reset_token: hashedToken,
+        reset_token_expires: {
+          [Op.gt]: new Date() // Token must not be expired
+        }
       }
     });
 
     if (!user) {
-      return res.status(400).json({
-        message: "Token tidak valid atau sudah expired"
-      });
-    }
-
-    // Check if token is expired
-    if (new Date() > new Date(user.reset_token_expires)) {
       return res.status(400).json({
         message: "Token tidak valid atau sudah expired"
       });
