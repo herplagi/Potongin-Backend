@@ -50,6 +50,14 @@ picture: {
   type: DataTypes.STRING,
   allowNull: true,
 },
+reset_token: {
+  type: DataTypes.STRING,
+  allowNull: true,
+},
+reset_token_expires: {
+  type: DataTypes.DATE,
+  allowNull: true,
+},
 }, {
   // Opsi tambahan
   tableName: 'users', 
