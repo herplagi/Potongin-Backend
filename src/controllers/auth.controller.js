@@ -2,6 +2,9 @@
 const User = require("../models/User.model");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const transporter = require("../config/email");
+const resetPasswordEmail = require("../templates/resetPasswordEmail");
 
 exports.register = async (req, res) => {
   try {
@@ -96,5 +99,115 @@ exports.getProfile = async (req, res) => {
     res
       .status(500)
       .json({ message: "Terjadi kesalahan pada server", error: error.message });
+  }
+};
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email wajib diisi" });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ where: { email: email } });
+    if (!user) {
+      return res.status(404).json({ message: "Email tidak terdaftar" });
+    }
+
+    // Generate random token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    
+    // Set token expiry to 1 hour from now
+    const resetTokenExpires = new Date(Date.now() + 3600000); // 1 hour
+
+    // Save token to database
+    await user.update({
+      reset_token: resetToken,
+      reset_token_expires: resetTokenExpires
+    });
+
+    // Create reset link
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    // Send email
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Reset Password - Potongin',
+      html: resetPasswordEmail(resetLink, user.name)
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({
+      message: "Email reset password telah dikirim. Silakan cek inbox Anda."
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({
+      message: "Terjadi kesalahan pada server",
+      error: error.message
+    });
+  }
+};
+
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        message: "Token dan password baru wajib diisi"
+      });
+    }
+
+    // Validate password length
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        message: "Password minimal 6 karakter"
+      });
+    }
+
+    // Find user with valid token
+    const user = await User.findOne({
+      where: {
+        reset_token: token
+      }
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        message: "Token tidak valid atau sudah expired"
+      });
+    }
+
+    // Check if token is expired
+    if (new Date() > new Date(user.reset_token_expires)) {
+      return res.status(400).json({
+        message: "Token tidak valid atau sudah expired"
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password and clear reset token
+    await user.update({
+      password: hashedPassword,
+      reset_token: null,
+      reset_token_expires: null
+    });
+
+    res.status(200).json({
+      message: "Password berhasil direset. Silakan login dengan password baru."
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      message: "Terjadi kesalahan pada server",
+      error: error.message
+    });
   }
 };
