@@ -500,8 +500,12 @@ exports.getUpcomingBookings = async (req, res) => {
       city 
     } = req.query;
 
+    // Validate and sanitize pagination parameters
+    const parsedPage = Math.max(1, parseInt(page) || 1);
+    const parsedLimit = Math.min(100, Math.max(1, parseInt(limit) || 10));
+
     // Calculate pagination offset
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const offset = (parsedPage - 1) * parsedLimit;
 
     // Build base where clause for upcoming bookings
     const whereClause = {
@@ -525,8 +529,8 @@ exports.getUpcomingBookings = async (req, res) => {
           bookings: [],
           pagination: {
             total: 0,
-            page: parseInt(page),
-            limit: parseInt(limit),
+            page: parsedPage,
+            limit: parsedLimit,
             totalPages: 0
           }
         });
@@ -607,7 +611,7 @@ exports.getUpcomingBookings = async (req, res) => {
       where: whereClause,
       include: includeClause,
       order: [['booking_time', 'ASC']],
-      limit: parseInt(limit),
+      limit: parsedLimit,
       offset: offset
     });
 
@@ -615,9 +619,9 @@ exports.getUpcomingBookings = async (req, res) => {
       bookings,
       pagination: {
         total: totalCount,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(totalCount / parseInt(limit))
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(totalCount / parsedLimit)
       }
     });
   } catch (error) {
