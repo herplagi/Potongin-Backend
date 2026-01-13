@@ -539,14 +539,21 @@ exports.getUpcomingBookings = async (req, res) => {
 
     // Apply optional filters
     if (date) {
-      // Filter by specific date
+      // Filter by specific date (but still ensure it's in the future)
       const startOfDay = new Date(date);
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date(date);
       endOfDay.setHours(23, 59, 59, 999);
+      const now = new Date();
+      
+      // Use the later of "now" or "start of requested day"
+      const effectiveStart = startOfDay > now ? startOfDay : now;
       
       whereClause.booking_time = {
-        [Op.between]: [startOfDay, endOfDay]
+        [Op.and]: [
+          { [Op.gte]: effectiveStart },
+          { [Op.lte]: endOfDay }
+        ]
       };
     }
 
