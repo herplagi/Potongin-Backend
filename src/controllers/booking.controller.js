@@ -485,6 +485,143 @@ exports.expirePendingBookings = async () => {
     }
 };
 
+// ✅ GET UPCOMING BOOKINGS
+exports.getUpcomingBookings = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user;
+    
+    // Extract query parameters for filtering and pagination
+    const { 
+      page = 1, 
+      limit = 10, 
+      date, 
+      service_id, 
+      city 
+    } = req.query;
+
+    // Calculate pagination offset
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Build base where clause for upcoming bookings
+    const whereClause = {
+      booking_time: { [Op.gte]: new Date() }, // Only future bookings
+      status: { [Op.ne]: 'cancelled' } // Exclude cancelled bookings
+    };
+
+    // Apply role-based filtering
+    if (userRole.is_customer && !userRole.is_owner) {
+      // Customers only see their own bookings
+      whereClause.customer_id = userId;
+    } else if (userRole.is_owner) {
+      // Owners see bookings for their barbershops
+      const ownerBarbershops = await Barbershop.findAll({
+        where: { owner_id: userId },
+        attributes: ['barbershop_id']
+      });
+      
+      if (ownerBarbershops.length === 0) {
+        return res.status(200).json({
+          bookings: [],
+          pagination: {
+            total: 0,
+            page: parseInt(page),
+            limit: parseInt(limit),
+            totalPages: 0
+          }
+        });
+      }
+      
+      whereClause.barbershop_id = {
+        [Op.in]: ownerBarbershops.map(b => b.barbershop_id)
+      };
+    }
+
+    // Apply optional filters
+    if (date) {
+      // Filter by specific date
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+      
+      whereClause.booking_time = {
+        [Op.between]: [startOfDay, endOfDay]
+      };
+    }
+
+    if (service_id) {
+      whereClause.service_id = service_id;
+    }
+
+    // Build include clause for related data
+    const includeClause = [
+      {
+        model: Service,
+        attributes: ['service_id', 'name', 'price', 'duration_minutes'],
+        required: true
+      },
+      {
+        model: Barbershop,
+        attributes: ['barbershop_id', 'name', 'address', 'city'],
+        required: true,
+        ...(city && {
+          where: { city: { [Op.like]: `%${city}%` } }
+        })
+      },
+      {
+        model: Staff,
+        attributes: ['staff_id', 'name', 'specialty'],
+        required: false
+      }
+    ];
+
+    // Add customer info for owners
+    if (userRole.is_owner) {
+      includeClause.push({
+        model: User,
+        as: 'customer',
+        attributes: ['user_id', 'name', 'email', 'phone_number']
+      });
+    }
+
+    // Get total count for pagination
+    const totalCount = await Booking.count({
+      where: whereClause,
+      include: city ? [{
+        model: Barbershop,
+        attributes: [],
+        where: { city: { [Op.like]: `%${city}%` } }
+      }] : []
+    });
+
+    // Fetch bookings with pagination
+    const bookings = await Booking.findAll({
+      where: whereClause,
+      include: includeClause,
+      order: [['booking_time', 'ASC']],
+      limit: parseInt(limit),
+      offset: offset
+    });
+
+    res.status(200).json({
+      bookings,
+      pagination: {
+        total: totalCount,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(totalCount / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Get upcoming bookings error:', error);
+    res.status(500).json({ 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 exports.checkStaffAvailability = async (req, res) => {
     try {
         const { barbershop_id, date, time } = req.query;

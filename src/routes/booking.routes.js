@@ -8,6 +8,9 @@ const BookingController = require('../controllers/booking.controller');
 router.post('/', authMiddleware, checkRole('customer'), BookingController.createBooking);
 router.get('/my-bookings', authMiddleware, checkRole('customer'), BookingController.getMyBookings);
 
+// Upcoming bookings endpoint - accessible by both customers and owners
+router.get('/upcoming', authMiddleware, checkRole(['customer', 'owner']), BookingController.getUpcomingBookings);
+
 router.get('/check-availability', BookingController.checkStaffAvailability);
 
 // Owner Routes
