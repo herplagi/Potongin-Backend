@@ -65,4 +65,19 @@ const Barbershop = sequelize.define('Barbershop', {
 Barbershop.belongsTo(User, { foreignKey: 'owner_id', as: 'owner' });
 Barbershop.belongsTo(User, { foreignKey: 'verified_by', as: 'verifier' });
 
+const BarbershopFacility = require('./BarbershopFacility.model');
+// Many-to-Many relationship
+Barbershop.belongsToMany(BarbershopFacility, {
+  through: 'BarbershopHasFacility',
+  as: 'facilities',
+  foreignKey: 'barbershop_id',
+  otherKey: 'facility_id',
+});
+
+BarbershopFacility.belongsToMany(Barbershop, {
+  through: 'BarbershopHasFacility',
+  foreignKey: 'facility_id',
+  otherKey: 'barbershop_id',
+});
+
 module.exports = Barbershop;

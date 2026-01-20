@@ -1,3 +1,4 @@
+// Imports - URUTAN PENTING!
 const sequelize = require("../config/database");
 const { Op } = require("sequelize");
 const fs = require("fs");
@@ -15,29 +16,59 @@ const Booking = require("../models/Booking.model");
 // --- FUNGSI UNTUK PUBLIK (Dipanggil oleh Customer App) ---
 // =================================================================
 
-// exports.getAllApprovedBarbershops = async (req, res) => {
-//     try {
-//         const barbershops = await Barbershop.findAll({
-//             where: { approval_status: 'approved' },
-//             attributes: ['barbershop_id', 'name', 'address', 'city', 'main_image_url'],
-//         });
-//         res.status(200).json(barbershops);
-//     } catch (error) {
-//         res.status(500).json({ message: "Server Error", error: error.message });
-//     }
-// };
+const checkIfOpen = (openingHours) => {
+  try {
+    if (!openingHours) return true; // Default buka jika tidak ada jadwal
+
+    const now = new Date();
+    const dayNames = [
+      "Minggu",
+      "Senin",
+      "Selasa",
+      "Rabu",
+      "Kamis",
+      "Jumat",
+      "Sabtu",
+    ];
+    const currentDay = dayNames[now.getDay()];
+
+    // Parse opening_hours (format JSON atau string)
+    const schedule =
+      typeof openingHours === "string"
+        ? JSON.parse(openingHours)
+        : openingHours;
+
+    const todaySchedule = schedule[currentDay];
+
+    if (!todaySchedule || !todaySchedule.aktif) {
+      return false; // Tutup jika hari ini tidak ada jadwal atau tidak aktif
+    }
+
+    // Check current time
+    const currentTime = now.getHours() * 60 + now.getMinutes(); // dalam menit
+
+    const [openHour, openMin] = todaySchedule.buka.split(":").map(Number);
+    const [closeHour, closeMin] = todaySchedule.tutup.split(":").map(Number);
+
+    const openTime = openHour * 60 + openMin;
+    const closeTime = closeHour * 60 + closeMin;
+
+    return currentTime >= openTime && currentTime <= closeTime;
+  } catch (error) {
+    console.error("Error checking if open:", error);
+    return true; // Default buka jika error parsing
+  }
+};
 
 exports.getAllApprovedBarbershops = async (req, res) => {
   try {
-    const { latitude, longitude, max_distance } = req.query;
+    const { latitude, longitude, max_distance, sort, search } = req.query;
 
     // Jika koordinat dan jarak maksimum diberikan → cari berdasarkan jarak
     if (latitude && longitude) {
       const lat = parseFloat(latitude);
       const lon = parseFloat(longitude);
-      const maxDist = max_distance
-        ? Math.max(parseFloat(max_distance), 0)
-        : 0.5; // default 500 meter = 0.5 km
+      const maxDist = max_distance ? Math.max(parseFloat(max_distance), 0) : 5;
 
       if (
         isNaN(lat) ||
@@ -49,11 +80,11 @@ exports.getAllApprovedBarbershops = async (req, res) => {
         lon > 180
       ) {
         return res.status(400).json({
-          message: "Parameter latitude, longitude, atau max_distance tidak valid.",
+          message:
+            "Parameter latitude, longitude, atau max_distance tidak valid.",
         });
       }
 
-      // 🔍 Raw query dengan agregasi review
       const rawQuery = `
         SELECT 
           b.*,
@@ -65,7 +96,9 @@ exports.getAllApprovedBarbershops = async (req, res) => {
             sin(radians(CAST(b.latitude AS DECIMAL(10,8))))
           )) AS distance_km,
           COALESCE(r_stats.avg_rating, 0) AS average_rating,
-          COALESCE(r_stats.review_count, 0) AS review_count
+          COALESCE(r_stats.review_count, 0) AS review_count,
+          COALESCE(b_stats.booking_count, 0) AS booking_count,
+          COALESCE(s_count.service_count, 0) AS service_count
         FROM barbershops b
         LEFT JOIN (
           SELECT 
@@ -76,15 +109,38 @@ exports.getAllApprovedBarbershops = async (req, res) => {
           WHERE status = 'approved'
           GROUP BY barbershop_id
         ) r_stats ON b.barbershop_id = r_stats.barbershop_id
+        LEFT JOIN (
+          SELECT 
+            barbershop_id,
+            COUNT(booking_id) AS booking_count
+          FROM bookings
+          WHERE status IN ('confirmed', 'completed')
+            AND booking_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+          GROUP BY barbershop_id
+        ) b_stats ON b.barbershop_id = b_stats.barbershop_id
+        LEFT JOIN (
+          SELECT 
+            barbershop_id,
+            COUNT(service_id) AS service_count
+          FROM services
+          WHERE is_active = TRUE
+          GROUP BY barbershop_id
+        ) s_count ON b.barbershop_id = s_count.barbershop_id
         WHERE b.approval_status = 'approved'
           AND b.latitude IS NOT NULL
           AND b.longitude IS NOT NULL
+          ${search ? "AND (b.name LIKE :search OR b.city LIKE :search OR b.address LIKE :search)" : ""}
         HAVING distance_km <= :maxDist
         ORDER BY distance_km ASC;
       `;
 
       const rawResults = await sequelize.query(rawQuery, {
-        replacements: { lat, lon, maxDist },
+        replacements: {
+          lat,
+          lon,
+          maxDist,
+          ...(search && { search: `%${search}%` }),
+        },
         type: sequelize.QueryTypes.SELECT,
       });
 
@@ -95,30 +151,42 @@ exports.getAllApprovedBarbershops = async (req, res) => {
           distance_km,
           average_rating,
           review_count,
+          booking_count,
+          service_count,
+          opening_hours,
           ...filteredShop
         } = shop;
 
-        // Opsional: hapus koordinat dari respons untuk keamanan/kebersihan
-        delete filteredShop.latitude;
-        delete filteredShop.longitude;
-
         return {
           ...filteredShop,
-          distance_km: parseFloat(parseFloat(distance_km).toFixed(2)),
+          distance: parseFloat(parseFloat(distance_km).toFixed(2)),
           average_rating: parseFloat(parseFloat(average_rating).toFixed(1)),
           review_count: parseInt(review_count, 10) || 0,
+          booking_count: parseInt(booking_count, 10) || 0,
+          service_count: parseInt(service_count, 10) || 0,
+          is_open: checkIfOpen(opening_hours), // ✅ ADD THIS
         };
       });
 
       return res.status(200).json(resultsWithDistance);
     }
 
-    // 📋 Jika TIDAK ada koordinat → ambil semua barbershop approved + review stats
+    // Query without distance
+    let orderClause = "ORDER BY b.createdAt DESC";
+
+    if (sort === "popular") {
+      orderClause = "ORDER BY booking_count DESC, average_rating DESC";
+    } else if (sort === "rating") {
+      orderClause = "ORDER BY average_rating DESC, review_count DESC";
+    }
+
     const rawQueryAll = `
       SELECT 
         b.*,
         COALESCE(r_stats.avg_rating, 0) AS average_rating,
-        COALESCE(r_stats.review_count, 0) AS review_count
+        COALESCE(r_stats.review_count, 0) AS review_count,
+        COALESCE(b_stats.booking_count, 0) AS booking_count,
+        COALESCE(s_count.service_count, 0) AS service_count
       FROM barbershops b
       LEFT JOIN (
         SELECT 
@@ -129,25 +197,52 @@ exports.getAllApprovedBarbershops = async (req, res) => {
         WHERE status = 'approved'
         GROUP BY barbershop_id
       ) r_stats ON b.barbershop_id = r_stats.barbershop_id
+      LEFT JOIN (
+        SELECT 
+          barbershop_id,
+          COUNT(booking_id) AS booking_count
+        FROM bookings
+        WHERE status IN ('confirmed', 'completed')
+          AND booking_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY barbershop_id
+      ) b_stats ON b.barbershop_id = b_stats.barbershop_id
+      LEFT JOIN (
+        SELECT 
+          barbershop_id,
+          COUNT(service_id) AS service_count
+        FROM services
+        WHERE is_active = TRUE
+        GROUP BY barbershop_id
+      ) s_count ON b.barbershop_id = s_count.barbershop_id
       WHERE b.approval_status = 'approved'
-      ORDER BY b.createdAt DESC;
+        ${search ? "AND (b.name LIKE :search OR b.city LIKE :search OR b.address LIKE :search)" : ""}
+      ${orderClause};
     `;
 
     const rawResultsAll = await sequelize.query(rawQueryAll, {
       type: sequelize.QueryTypes.SELECT,
+      ...(search && { replacements: { search: `%${search}%` } }),
     });
 
     const resultsAll = rawResultsAll.map((shop) => {
-      const { latitude, longitude, average_rating, review_count, ...filteredShop } = shop;
-
-      // Opsional: hapus koordinat
-      delete filteredShop.latitude;
-      delete filteredShop.longitude;
+      const {
+        latitude,
+        longitude,
+        average_rating,
+        review_count,
+        booking_count,
+        service_count,
+        opening_hours,
+        ...filteredShop
+      } = shop;
 
       return {
         ...filteredShop,
         average_rating: parseFloat(parseFloat(average_rating).toFixed(1)),
         review_count: parseInt(review_count, 10) || 0,
+        booking_count: parseInt(booking_count, 10) || 0,
+        service_count: parseInt(service_count, 10) || 0,
+        is_open: checkIfOpen(opening_hours), // ✅ ADD THIS
       };
     });
 
@@ -161,6 +256,8 @@ exports.getAllApprovedBarbershops = async (req, res) => {
 exports.getBarbershopDetailsById = async (req, res) => {
   try {
     const { id } = req.params;
+    const BarbershopFacility = require("../models/BarbershopFacility.model");
+
     const barbershop = await Barbershop.findOne({
       where: { barbershop_id: id, approval_status: "approved" },
       include: [
@@ -170,25 +267,38 @@ exports.getBarbershopDetailsById = async (req, res) => {
           where: { is_active: true },
           required: false,
         },
-        { 
-          model: Staff, 
-          as: "staff", 
-          where: { is_active: true }, // ✅ FILTER HANYA STAFF AKTIF
-          required: false 
+        {
+          model: Staff,
+          as: "staff",
+          where: { is_active: true },
+          required: false,
+        },
+        {
+          model: BarbershopFacility,
+          as: "facilities",
+          through: { attributes: [] }, // Hide junction table fields
+          where: { is_active: true },
+          required: false,
         },
       ],
     });
+
     if (!barbershop) {
       return res
         .status(404)
         .json({ message: "Barbershop tidak ditemukan atau belum disetujui." });
     }
-    res.status(200).json(barbershop);
+
+    // Add is_open status
+    const barbershopData = barbershop.toJSON();
+    barbershopData.is_open = checkIfOpen(barbershopData.opening_hours);
+
+    res.status(200).json(barbershopData);
   } catch (error) {
+    console.error("GET BARBERSHOP DETAILS ERROR:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
-
 
 // =================================================================
 // --- FUNGSI UNTUK CUSTOMER / PENDAFTARAN ---
@@ -221,16 +331,14 @@ exports.registerBarbershop = async (req, res) => {
         ktp_url: ktpUrl,
         permit_url: permitUrl,
       },
-      { transaction: t }
+      { transaction: t },
     );
 
     await t.commit();
-    res
-      .status(201)
-      .json({
-        message: "Pendaftaran barbershop berhasil.",
-        barbershop: newBarbershop,
-      });
+    res.status(201).json({
+      message: "Pendaftaran barbershop berhasil.",
+      barbershop: newBarbershop,
+    });
   } catch (error) {
     await t.rollback();
     console.error("REGISTER BARBERSHOP ERROR:", error);
@@ -274,22 +382,42 @@ exports.getMyBarbershopById = async (req, res) => {
   try {
     const ownerId = req.user.id;
     const { barbershopId } = req.params;
+
     const barbershop = await Barbershop.findOne({
       where: {
         barbershop_id: barbershopId,
         owner_id: ownerId,
       },
     });
+
     if (!barbershop) {
-      return res
-        .status(404)
-        .json({
-          message:
-            "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
-        });
+      return res.status(404).json({
+        message: "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
+      });
     }
-    res.status(200).json(barbershop);
+
+    // ✅ Fetch facilities for this barbershop
+    const facilities = await sequelize.query(
+      `SELECT 
+        bf.facility_id,
+        bf.name,
+        bf.icon
+      FROM BarbershopFacility bf
+      INNER JOIN BarbershopHasFacility bhf ON bf.facility_id = bhf.facility_id
+      WHERE bhf.barbershop_id = ?
+      ORDER BY bf.name`,
+      {
+        replacements: [barbershopId],
+        type: sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    const barbershopData = barbershop.toJSON();
+    barbershopData.facilities = facilities;
+
+    res.status(200).json(barbershopData);
   } catch (error) {
+    console.error("GET MY BARBERSHOP ERROR:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
@@ -316,12 +444,9 @@ exports.updateMyBarbershop = async (req, res) => {
 
     if (!barbershop) {
       await t.rollback();
-      return res
-        .status(404)
-        .json({
-          message:
-            "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
-        });
+      return res.status(404).json({
+        message: "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
+      });
     }
 
     const updateData = {};
@@ -331,7 +456,6 @@ exports.updateMyBarbershop = async (req, res) => {
     if (opening_hours !== undefined) {
       updateData.opening_hours = JSON.parse(opening_hours);
     }
-    // --- TAMBAHKAN LOGIKA UNTUK LATITUDE DAN LONGITUDE ---
     if (latitude !== undefined) {
       const lat = parseFloat(latitude);
       if (isNaN(lat) || lat < -90 || lat > 90) {
@@ -348,9 +472,7 @@ exports.updateMyBarbershop = async (req, res) => {
       }
       updateData.longitude = lon;
     }
-    // --- TAMBAHKAN LOGIKA UNTUK DESCRIPTION ---
     if (description !== undefined) {
-      // Izinkan description kosong/null
       updateData.description = description || null;
     }
 
@@ -359,7 +481,7 @@ exports.updateMyBarbershop = async (req, res) => {
         if (barbershop.ktp_url)
           fs.unlink(
             path.join(__dirname, "../../public", barbershop.ktp_url),
-            () => {}
+            () => {},
           );
         updateData.ktp_url = `/uploads/documents/${req.files.ktp[0].filename}`;
       }
@@ -367,7 +489,7 @@ exports.updateMyBarbershop = async (req, res) => {
         if (barbershop.permit_url)
           fs.unlink(
             path.join(__dirname, "../../public", barbershop.permit_url),
-            () => {}
+            () => {},
           );
         updateData.permit_url = `/uploads/documents/${req.files.permit[0].filename}`;
       }
@@ -380,12 +502,10 @@ exports.updateMyBarbershop = async (req, res) => {
     await barbershop.update(updateData, { transaction: t });
 
     await t.commit();
-    res
-      .status(200)
-      .json({
-        message: "Data barbershop berhasil diperbarui dan diajukan ulang.",
-        barbershop,
-      });
+    res.status(200).json({
+      message: "Data barbershop berhasil diperbarui dan diajukan ulang.",
+      barbershop,
+    });
   } catch (error) {
     await t.rollback();
     console.error("UPDATE BARBERSHOP ERROR:", error);
@@ -409,13 +529,11 @@ exports.getBarbershopKpis = async (req, res) => {
     }
 
     const now = new Date();
-    
-    // Get data untuk 7 hari terakhir untuk chart
+
     const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(now.getDate() - 6); // 6 hari yang lalu + hari ini = 7 hari
+    sevenDaysAgo.setDate(now.getDate() - 6);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    // Query untuk mendapatkan pendapatan per hari
     const weeklyRevenue = await Booking.findAll({
       where: {
         barbershop_id: barbershopId,
@@ -426,27 +544,25 @@ exports.getBarbershopKpis = async (req, res) => {
         },
       },
       attributes: [
-        [sequelize.fn('DATE', sequelize.col('paid_at')), 'date'],
-        [sequelize.fn('SUM', sequelize.col('total_price')), 'revenue'],
+        [sequelize.fn("DATE", sequelize.col("paid_at")), "date"],
+        [sequelize.fn("SUM", sequelize.col("total_price")), "revenue"],
       ],
-      group: [sequelize.fn('DATE', sequelize.col('paid_at'))],
-      order: [[sequelize.fn('DATE', sequelize.col('paid_at')), 'ASC']],
+      group: [sequelize.fn("DATE", sequelize.col("paid_at"))],
+      order: [[sequelize.fn("DATE", sequelize.col("paid_at")), "ASC"]],
       raw: true,
     });
 
-    // Format data untuk chart - pastikan semua 7 hari ada
     const chartData = [];
-    const dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-    
+    const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+
     for (let i = 0; i < 7; i++) {
       const date = new Date(sevenDaysAgo);
       date.setDate(sevenDaysAgo.getDate() + i);
-      const dateString = date.toISOString().split('T')[0];
+      const dateString = date.toISOString().split("T")[0];
       const dayName = dayNames[date.getDay()];
-      
-      // Cari revenue untuk tanggal ini
-      const dayRevenue = weeklyRevenue.find(r => r.date === dateString);
-      
+
+      const dayRevenue = weeklyRevenue.find((r) => r.date === dateString);
+
       chartData.push({
         name: dayName,
         Pendapatan: dayRevenue ? parseFloat(dayRevenue.revenue) : 0,
@@ -493,7 +609,7 @@ exports.getBarbershopKpis = async (req, res) => {
       bookingsToday: bookingsToday || 0,
       upcomingBookings: upcomingBookings || 0,
       serviceCount: serviceCount || 0,
-      weeklyChart: chartData, // ✅ Tambahkan data chart
+      weeklyChart: chartData,
     });
   } catch (error) {
     console.error("GET KPI ERROR:", error);
@@ -510,19 +626,14 @@ exports.resubmitBarbershop = async (req, res) => {
       where: { owner_id: ownerId, barbershop_id: barbershopId },
     });
     if (!barbershop) {
-      return res
-        .status(404)
-        .json({
-          message:
-            "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
-        });
+      return res.status(404).json({
+        message: "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
+      });
     }
     if (barbershop.approval_status !== "rejected") {
-      return res
-        .status(400)
-        .json({
-          message: "Hanya barbershop yang ditolak yang bisa diajukan ulang.",
-        });
+      return res.status(400).json({
+        message: "Hanya barbershop yang ditolak yang bisa diajukan ulang.",
+      });
     }
 
     await barbershop.update({
@@ -556,12 +667,11 @@ exports.uploadMainImage = async (req, res) => {
       return res.status(400).json({ message: "File gambar tidak ditemukan" });
     }
 
-    // Hapus gambar lama jika ada
     if (barbershop.main_image_url) {
       const oldImagePath = path.join(
         __dirname,
         "../../public",
-        barbershop.main_image_url
+        barbershop.main_image_url,
       );
       if (fs.existsSync(oldImagePath)) {
         fs.unlinkSync(oldImagePath);
@@ -581,7 +691,6 @@ exports.uploadMainImage = async (req, res) => {
   }
 };
 
-// Get gallery images (untuk fitur masa depan)
 exports.getGalleryImages = async (req, res) => {
   try {
     const { barbershopId } = req.params;
@@ -591,11 +700,9 @@ exports.getGalleryImages = async (req, res) => {
       return res.status(404).json({ message: "Barbershop tidak ditemukan" });
     }
 
-    // Untuk saat ini hanya return main image
-    // Nanti bisa dikembangkan untuk multiple images
     res.status(200).json({
       main_image: barbershop.main_image_url,
-      gallery: [], // untuk fitur masa depan
+      gallery: [],
     });
   } catch (error) {
     console.error("Get gallery error:", error);
@@ -610,24 +717,13 @@ exports.updateBarbershopLocation = async (req, res) => {
     const ownerId = req.user.id;
     const { latitude, longitude } = req.body;
 
-    console.log('📍 UPDATE LOCATION REQUEST:', {
-      barbershopId,
-      ownerId,
-      latitude,
-      longitude,
-      latitudeType: typeof latitude,
-      longitudeType: typeof longitude
-    });
-
-    // Validasi parameter wajib
     if (latitude === undefined || longitude === undefined) {
       await t.rollback();
-      return res.status(400).json({ 
-        message: 'Parameter latitude dan longitude wajib disertakan.' 
+      return res.status(400).json({
+        message: "Parameter latitude dan longitude wajib disertakan.",
       });
     }
 
-    // Cari barbershop
     const barbershop = await Barbershop.findOne({
       where: { barbershop_id: barbershopId, owner_id: ownerId },
       transaction: t,
@@ -640,81 +736,61 @@ exports.updateBarbershopLocation = async (req, res) => {
       });
     }
 
-    console.log('🏪 BARBERSHOP SEBELUM UPDATE:', {
-      id: barbershop.barbershop_id,
-      name: barbershop.name,
-      oldLatitude: barbershop.latitude,
-      oldLongitude: barbershop.longitude
-    });
-
-    // Validasi dan konversi latitude
     const lat = parseFloat(latitude);
     if (isNaN(lat) || lat < -90 || lat > 90) {
       await t.rollback();
-      return res.status(400).json({ 
-        message: `Latitude tidak valid: ${latitude}. Harus antara -90 dan 90.` 
+      return res.status(400).json({
+        message: `Latitude tidak valid: ${latitude}. Harus antara -90 dan 90.`,
       });
     }
 
-    // Validasi dan konversi longitude
     const lon = parseFloat(longitude);
     if (isNaN(lon) || lon < -180 || lon > 180) {
       await t.rollback();
-      return res.status(400).json({ 
-        message: `Longitude tidak valid: ${longitude}. Harus antara -180 dan 180.` 
+      return res.status(400).json({
+        message: `Longitude tidak valid: ${longitude}. Harus antara -180 dan 180.`,
       });
     }
 
-    // ✅ UPDATE LOKASI (JANGAN ubah approval_status)
-    await barbershop.update({
-      latitude: lat,
-      longitude: lon
-    }, { 
-      transaction: t,
-      // Force update even if values are the same
-      silent: false
-    });
+    await barbershop.update(
+      {
+        latitude: lat,
+        longitude: lon,
+      },
+      {
+        transaction: t,
+        silent: false,
+      },
+    );
 
-    // Commit transaction
     await t.commit();
 
-    // Fetch ulang data terbaru untuk memastikan
     const updatedBarbershop = await Barbershop.findByPk(barbershopId);
 
-    console.log('✅ BARBERSHOP SETELAH UPDATE:', {
-      id: updatedBarbershop.barbershop_id,
-      name: updatedBarbershop.name,
-      newLatitude: updatedBarbershop.latitude,
-      newLongitude: updatedBarbershop.longitude
-    });
-
-    res.status(200).json({ 
-      message: "Lokasi barbershop berhasil diperbarui.", 
+    res.status(200).json({
+      message: "Lokasi barbershop berhasil diperbarui.",
       barbershop: updatedBarbershop,
       updated: {
         latitude: updatedBarbershop.latitude,
-        longitude: updatedBarbershop.longitude
-      }
+        longitude: updatedBarbershop.longitude,
+      },
     });
-
   } catch (error) {
     await t.rollback();
-    console.error("❌ UPDATE BARBERSHOP LOCATION ERROR:", error);
-    res.status(500).json({ 
-      message: "Terjadi kesalahan pada server", 
-      error: error.message 
+    console.error("UPDATE BARBERSHOP LOCATION ERROR:", error);
+    res.status(500).json({
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
     });
   }
 };
 
-// ===== FUNGSI LAPORAN TRANSAKSI =====
 exports.getTransactionReport = async (req, res) => {
   try {
     const { barbershopId } = req.params;
     const ownerId = req.user.id;
-    const { type, startDate, endDate } = req.query; // type: 'weekly' atau 'monthly'
+    const { type, startDate, endDate } = req.query;
 
-    // Verifikasi kepemilikan
     const barbershop = await Barbershop.findOne({
       where: { barbershop_id: barbershopId, owner_id: ownerId },
     });
@@ -723,7 +799,6 @@ exports.getTransactionReport = async (req, res) => {
       return res.status(403).json({ message: "Akses ditolak" });
     }
 
-    // Tentukan rentang tanggal
     let start, end;
     if (startDate && endDate) {
       start = new Date(startDate);
@@ -737,13 +812,11 @@ exports.getTransactionReport = async (req, res) => {
       start = new Date();
       start.setMonth(end.getMonth() - 1);
     } else {
-      // Default: minggu ini
       end = new Date();
       start = new Date();
       start.setDate(end.getDate() - 7);
     }
 
-    // Query bookings dengan join ke Service dan User
     const bookings = await Booking.findAll({
       where: {
         barbershop_id: barbershopId,
@@ -771,10 +844,9 @@ exports.getTransactionReport = async (req, res) => {
       order: [["updatedAt", "DESC"]],
     });
 
-    // Hitung statistik
     const totalRevenue = bookings.reduce(
       (sum, booking) => sum + parseFloat(booking.total_price),
-      0
+      0,
     );
 
     const totalTransactions = bookings.length;
@@ -782,7 +854,6 @@ exports.getTransactionReport = async (req, res) => {
     const averageTransaction =
       totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
 
-    // Grouping by date
     const dailyStats = {};
     bookings.forEach((booking) => {
       const date = new Date(booking.updatedAt).toLocaleDateString("id-ID");
@@ -797,7 +868,6 @@ exports.getTransactionReport = async (req, res) => {
       dailyStats[date].revenue += parseFloat(booking.total_price);
     });
 
-    // Grouping by service
     const serviceStats = {};
     bookings.forEach((booking) => {
       const serviceName = booking.Service?.name || "Unknown";
@@ -865,16 +935,20 @@ exports.updateBarbershopDescription = async (req, res) => {
       });
     }
 
-    // Validasi minimal karakter (opsional)
-    if (description && description.trim().length > 0 && description.trim().length < 10) {
+    if (
+      description &&
+      description.trim().length > 0 &&
+      description.trim().length < 10
+    ) {
       await t.rollback();
-      return res.status(400).json({ message: "Deskripsi minimal 10 karakter." });
+      return res
+        .status(400)
+        .json({ message: "Deskripsi minimal 10 karakter." });
     }
 
-    // ✅ PENTING: Hanya update deskripsi, JANGAN ubah approval_status
     await barbershop.update(
       { description: description || null },
-      { transaction: t }
+      { transaction: t },
     );
 
     await t.commit();
@@ -905,48 +979,44 @@ exports.getWeeklyChartData = async (req, res) => {
       return res.status(403).json({ message: "Akses ditolak." });
     }
 
-    // Ambil data 7 hari terakhir
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(endDate.getDate() - 6); // 7 hari termasuk hari ini
+    startDate.setDate(endDate.getDate() - 6);
 
-    // Query booking completed dengan group by date
     const bookings = await Booking.findAll({
       where: {
         barbershop_id: barbershopId,
-        status: 'completed',
-        payment_status: 'paid',
+        status: "completed",
+        payment_status: "paid",
         updatedAt: {
-          [Op.between]: [startDate, endDate]
-        }
+          [Op.between]: [startDate, endDate],
+        },
       },
       attributes: [
-        [sequelize.fn('DATE', sequelize.col('updatedAt')), 'date'],
-        [sequelize.fn('SUM', sequelize.col('total_price')), 'revenue'],
-        [sequelize.fn('COUNT', sequelize.col('booking_id')), 'count']
+        [sequelize.fn("DATE", sequelize.col("updatedAt")), "date"],
+        [sequelize.fn("SUM", sequelize.col("total_price")), "revenue"],
+        [sequelize.fn("COUNT", sequelize.col("booking_id")), "count"],
       ],
-      group: [sequelize.fn('DATE', sequelize.col('updatedAt'))],
-      raw: true
+      group: [sequelize.fn("DATE", sequelize.col("updatedAt"))],
+      raw: true,
     });
 
-    // Buat array untuk 7 hari terakhir
     const chartData = [];
-    const dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-    
+    const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = date.toISOString().split("T")[0];
       const dayName = dayNames[date.getDay()];
 
-      // Cari data booking untuk tanggal ini
-      const dayData = bookings.find(b => b.date === dateStr);
+      const dayData = bookings.find((b) => b.date === dateStr);
 
       chartData.push({
         name: dayName,
         date: dateStr,
         Pendapatan: dayData ? parseInt(dayData.revenue) : 0,
-        Transaksi: dayData ? parseInt(dayData.count) : 0
+        Transaksi: dayData ? parseInt(dayData.count) : 0,
       });
     }
 
@@ -957,3 +1027,309 @@ exports.getWeeklyChartData = async (req, res) => {
   }
 };
 
+// =================================================================
+// --- FITUR BARU - UNTUK MOBILE APP ---
+// =================================================================
+
+exports.getTrendingBarbershops = async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+
+    const query = `
+      SELECT 
+        b.*,
+        COALESCE(AVG(r.rating), 0) as average_rating,
+        COUNT(DISTINCT r.review_id) as review_count,
+        COUNT(DISTINCT bk.booking_id) as booking_count,
+        COUNT(DISTINCT s.service_id) as service_count
+      FROM barbershops b
+      LEFT JOIN reviews r ON b.barbershop_id = r.barbershop_id
+      LEFT JOIN bookings bk ON b.barbershop_id = bk.barbershop_id 
+        AND bk.createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      LEFT JOIN services s ON b.barbershop_id = s.barbershop_id AND s.is_active = TRUE
+      WHERE b.approval_status = 'approved'
+      GROUP BY b.barbershop_id
+      HAVING review_count > 0
+      ORDER BY booking_count DESC, average_rating DESC, review_count DESC
+      LIMIT ?
+    `;
+
+    const trending = await sequelize.query(query, {
+      replacements: [parseInt(limit)],
+      type: sequelize.QueryTypes.SELECT,
+    });
+
+    res.json(trending);
+  } catch (error) {
+    console.error("Error fetching trending barbershops:", error);
+    res
+      .status(500)
+      .json({ message: "Gagal mengambil data barbershop trending" });
+  }
+};
+
+exports.getStatistics = async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        COUNT(DISTINCT b.barbershop_id) as total_barbershops,
+        COUNT(DISTINCT u.user_id) as total_users,
+        COUNT(DISTINCT bk.booking_id) as total_bookings,
+        COALESCE(AVG(r.rating), 0) as average_rating
+      FROM barbershops b
+      LEFT JOIN users u ON u.role = 'customer'
+      LEFT JOIN bookings bk ON bk.status = 'completed'
+      LEFT JOIN reviews r ON r.rating IS NOT NULL
+      WHERE b.approval_status = 'approved'
+    `;
+
+    const stats = await sequelize.query(query, {
+      type: sequelize.QueryTypes.SELECT,
+    });
+
+    res.json(stats[0]);
+  } catch (error) {
+    console.error("Error fetching statistics:", error);
+    res.status(500).json({ message: "Gagal mengambil statistik" });
+  }
+};
+
+exports.getBarbershopHours = async (req, res) => {
+  try {
+    const { barbershopId } = req.params;
+
+    const schedules = await sequelize.query(
+      `SELECT 
+        day_of_week,
+        open_time,
+        close_time,
+        is_closed
+      FROM BarbershopSchedule
+      WHERE barbershop_id = ?
+      ORDER BY FIELD(day_of_week, 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')`,
+      {
+        replacements: [barbershopId],
+        type: sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    res.json({ schedules });
+  } catch (error) {
+    console.error("Error fetching barbershop hours:", error);
+    res.status(500).json({ message: "Error fetching operating hours" });
+  }
+};
+
+exports.getBarbershopFacilities = async (req, res) => {
+  try {
+    const { barbershopId } = req.params;
+
+    const facilities = await sequelize.query(
+      `SELECT 
+        bf.facility_id,
+        bf.name,
+        bf.icon,
+        bf.description
+      FROM BarbershopFacility bf
+      WHERE bf.barbershop_id = ?
+      ORDER BY bf.name`,
+      {
+        replacements: [barbershopId],
+        type: sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    res.json({ facilities });
+  } catch (error) {
+    console.error("Error fetching facilities:", error);
+    res.status(500).json({ message: "Error fetching facilities" });
+  }
+};
+
+exports.getBarbershopGallery = async (req, res) => {
+  try {
+    const { barbershopId } = req.params;
+
+    const images = await sequelize.query(
+      `SELECT 
+        image_id,
+        image_url,
+        caption,
+        display_order,
+        created_at
+      FROM BarbershopImage
+      WHERE barbershop_id = ?
+      ORDER BY display_order ASC, created_at DESC`,
+      {
+        replacements: [barbershopId],
+        type: sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    res.json({ images });
+  } catch (error) {
+    console.error("Error fetching gallery:", error);
+    res.status(500).json({ message: "Error fetching gallery" });
+  }
+};
+
+exports.getPopularServices = async (req, res) => {
+  try {
+    const { barbershopId } = req.params;
+    const limit = parseInt(req.query.limit) || 5;
+
+    const services = await sequelize.query(
+      `SELECT 
+        s.*,
+        COUNT(b.booking_id) as booking_count
+      FROM services s
+      LEFT JOIN bookings b ON s.service_id = b.service_id AND b.status = 'completed'
+      WHERE s.barbershop_id = ?
+      GROUP BY s.service_id
+      ORDER BY booking_count DESC, s.name ASC
+      LIMIT ?`,
+      {
+        replacements: [barbershopId, limit],
+        type: sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    res.json({ services });
+  } catch (error) {
+    console.error("Error fetching popular services:", error);
+    res.status(500).json({ message: "Error fetching popular services" });
+  }
+};
+
+// ✅ FIXED: Get all available facilities (for selection UI)
+exports.getAllFacilities = async (req, res) => {
+  try {
+    const facilities = await sequelize.query(
+      `SELECT 
+        facility_id,
+        name,
+        icon,
+        is_active
+      FROM BarbershopFacility
+      WHERE is_active = true
+      ORDER BY name ASC`,
+      {
+        type: sequelize.QueryTypes.SELECT,
+      },
+    );
+
+    res.json(facilities);
+  } catch (error) {
+    console.error("Error fetching all facilities:", error);
+    res.status(500).json({
+      message: "Error fetching facilities list",
+      error: error.message,
+    });
+  }
+};
+
+// ✅ FIXED: Update barbershop facilities (owner only)
+exports.updateBarbershopFacilities = async (req, res) => {
+  try {
+    const { barbershopId } = req.params;
+    const { facility_ids } = req.body;
+
+    console.log("Updating facilities for barbershop:", barbershopId);
+    console.log("Facility IDs:", facility_ids);
+    console.log("User ID from token:", req.user.id);
+
+    // Validate owner
+    const barbershop = await Barbershop.findOne({
+      where: {
+        barbershop_id: barbershopId,
+        owner_id: req.user.id,
+      },
+    });
+
+    if (!barbershop) {
+      return res.status(404).json({
+        message: "Barbershop tidak ditemukan atau Anda tidak memiliki akses",
+      });
+    }
+
+    // Validate facility_ids
+    if (!Array.isArray(facility_ids)) {
+      return res.status(400).json({
+        message: "facility_ids harus berupa array",
+      });
+    }
+
+    // Start transaction
+    const transaction = await sequelize.transaction();
+
+    try {
+      // Delete existing facilities
+      await sequelize.query(
+        `DELETE FROM BarbershopHasFacility WHERE barbershop_id = ?`,
+        {
+          replacements: [barbershopId],
+          type: sequelize.QueryTypes.DELETE,
+          transaction,
+        },
+      );
+
+      // Insert new facilities (only if array not empty)
+      if (facility_ids.length > 0) {
+        // Validate each facility_id format (should be UUID)
+        const validFacilities = facility_ids.filter(
+          (id) => id && typeof id === "string" && id.length > 0,
+        );
+
+        if (validFacilities.length > 0) {
+          // ✅ FIXED: Remove created_at column - only insert barbershop_id and facility_id
+          const values = validFacilities
+            .map((facilityId) => `('${barbershopId}', '${facilityId}')`)
+            .join(",");
+
+          await sequelize.query(
+            `INSERT INTO BarbershopHasFacility (barbershop_id, facility_id) 
+             VALUES ${values}`,
+            {
+              type: sequelize.QueryTypes.INSERT,
+              transaction,
+            },
+          );
+        }
+      }
+
+      await transaction.commit();
+
+      // Fetch updated facilities
+      const updatedFacilities = await sequelize.query(
+        `SELECT 
+          bf.facility_id,
+          bf.name,
+          bf.icon
+        FROM BarbershopFacility bf
+        INNER JOIN BarbershopHasFacility bhf ON bf.facility_id = bhf.facility_id
+        WHERE bhf.barbershop_id = ?
+        ORDER BY bf.name`,
+        {
+          replacements: [barbershopId],
+          type: sequelize.QueryTypes.SELECT,
+        },
+      );
+
+      res.json({
+        message: "Fasilitas berhasil diperbarui",
+        facilities: updatedFacilities,
+      });
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  } catch (error) {
+    console.error("Error updating facilities:", error);
+    res.status(500).json({
+      message: "Error updating facilities",
+      error: error.message,
+    });
+  }
+};
+
+module.exports = exports;

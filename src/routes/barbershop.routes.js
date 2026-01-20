@@ -1,4 +1,4 @@
-// src/routes/barbershop.routes.js - UPDATED
+// src/routes/barbershop.routes.js - COMPLETE FIXED VERSION
 const express = require("express");
 const router = express.Router();
 
@@ -8,20 +8,32 @@ const upload = require("../middleware/upload.middleware");
 const BarbershopController = require("../controllers/barbershop.controller");
 const serviceRoutes = require("./service.routes");
 const staffRoutes = require("./staff.routes");
-const scheduleRoutes = require("./schedule.routes"); // ✅ NEW
+const scheduleRoutes = require("./schedule.routes");
 const uploadImages = require("../middleware/uploadImages.middleware");
 
 const ownerMiddleware = [authMiddleware, checkRole("owner")];
 
 // =================================================================
-// --- Rute Publik (Untuk Customer App, Tidak Perlu Login) ---
+// --- RUTE PUBLIK (Tanpa Authentication) ---
 // =================================================================
 
+// General public routes - HARUS DI ATAS route dengan :barbershopId
 router.get("/", BarbershopController.getAllApprovedBarbershops);
+router.get("/trending", BarbershopController.getTrendingBarbershops);
+router.get("/statistics", BarbershopController.getStatistics);
+
+// ✅ NEW: Facilities routes (must be BEFORE :barbershopId routes)
+router.get("/facilities/all", BarbershopController.getAllFacilities);
+
+// Public routes dengan :barbershopId parameter
 router.get("/detail/:id", BarbershopController.getBarbershopDetailsById);
+router.get("/:barbershopId/hours", BarbershopController.getBarbershopHours);
+router.get("/:barbershopId/facilities", BarbershopController.getBarbershopFacilities);
+router.get("/:barbershopId/gallery", BarbershopController.getBarbershopGallery);
+router.get("/:barbershopId/popular-services", BarbershopController.getPopularServices);
 
 // =================================================================
-// --- Rute Customer (Perlu Login) ---
+// --- RUTE CUSTOMER (Butuh Authentication) ---
 // =================================================================
 
 router.post(
@@ -41,7 +53,7 @@ router.get(
 );
 
 // =================================================================
-// --- Rute Owner (Perlu Login & Role Owner) ---
+// --- RUTE OWNER (Butuh Authentication + Role Owner) ---
 // =================================================================
 
 router.get(
@@ -109,12 +121,19 @@ router.get(
   BarbershopController.getWeeklyChartData
 );
 
+// ✅ NEW: Owner facilities management
+router.post(
+  "/:barbershopId/facilities",
+  ownerMiddleware,
+  BarbershopController.updateBarbershopFacilities
+);
 
-router.get("/:barbershopId/gallery", BarbershopController.getGalleryImages);
+// =================================================================
+// --- NESTED ROUTES (Harus di paling bawah) ---
+// =================================================================
 
-// Mount nested routes dengan :barbershopId
 router.use("/:barbershopId/services", serviceRoutes);
 router.use("/:barbershopId/staff", staffRoutes);
-router.use("/:barbershopId/schedule", scheduleRoutes); // ✅ NEW
+router.use("/:barbershopId/schedule", scheduleRoutes);
 
 module.exports = router;
