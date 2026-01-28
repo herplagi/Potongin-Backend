@@ -1,4 +1,4 @@
-// src/controllers/staff.controller.js - FIXED VERSION
+// src/controllers/staff.controller.js - PERBAIKAN LENGKAP
 const Barbershop = require('../models/Barbershop.model');
 const Staff = require('../models/Staff.model');
 const Booking = require('../models/Booking.model');
@@ -13,6 +13,7 @@ const verifyOwnerAndGetBarbershop = async (ownerId, barbershopId) => {
     if (!barbershopId) {
         throw new Error('Barbershop ID tidak disediakan.');
     }
+    
     const barbershop = await Barbershop.findOne({
         where: { barbershop_id: barbershopId, owner_id: ownerId }
     });
@@ -20,13 +21,11 @@ const verifyOwnerAndGetBarbershop = async (ownerId, barbershopId) => {
     if (!barbershop) {
         throw new Error('Barbershop tidak ditemukan atau Anda tidak punya hak akses.');
     }
-    if (barbershop.approval_status !== 'approved') {
-        throw new Error('Aksi tidak diizinkan. Barbershop Anda belum disetujui oleh Admin.');
-    }
+    
     return barbershop;
 };
 
-// ✅ Helper function untuk cek booking yang terpengaruh oleh perubahan staff
+// Helper function untuk cek booking yang terpengaruh oleh perubahan staff
 const checkAffectedBookingsByStaff = async (staffId) => {
     const now = new Date();
     const thirtyDaysFromNow = new Date();
@@ -89,58 +88,129 @@ const checkAffectedBookingsByStaff = async (staffId) => {
 
 // ✅ Membuat staf baru dengan upload foto
 exports.createStaff = async (req, res) => {
+    console.log('\n=== CREATE STAFF DEBUG ===');
+    console.log('1. User:', req.user ? `${req.user.id} (${req.user.role})` : 'NOT AUTHENTICATED');
+    console.log('2. Params:', req.params);
+    console.log('3. Body:', req.body);
+    console.log('4. File:', req.file ? `${req.file.filename} (${req.file.size} bytes)` : 'No file');
+    console.log('5. Content-Type:', req.headers['content-type']);
+    
     try {
+        // Validasi user
+        if (!req.user || !req.user.id) {
+            console.log('❌ ERROR: User tidak terautentikasi');
+            return res.status(401).json({ message: 'User tidak terautentikasi' });
+        }
+
         const ownerId = req.user.id;
         const { barbershopId } = req.params;
-        await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
+        
+        // Validasi barbershopId
+        if (!barbershopId) {
+            console.log('❌ ERROR: Barbershop ID tidak ada di params');
+            if (req.file) fs.unlinkSync(req.file.path);
+            return res.status(400).json({ message: 'Barbershop ID tidak ditemukan' });
+        }
+
+        console.log('6. Verifying barbershop ownership...');
+        const barbershop = await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
+        console.log('✅ Barbershop verified:', barbershop.name);
 
         const { name, specialty } = req.body;
-        if (!name) return res.status(400).json({ message: 'Nama staf wajib diisi.' });
+        
+        // Validasi input
+        if (!name || name.trim() === '') {
+            console.log('❌ ERROR: Nama staff kosong');
+            if (req.file) fs.unlinkSync(req.file.path);
+            return res.status(400).json({ message: 'Nama staf wajib diisi.' });
+        }
 
         let pictureUrl = null;
         if (req.file) {
             pictureUrl = `/uploads/staff-photos/${req.file.filename}`;
+            console.log('📸 Photo URL:', pictureUrl);
         }
 
-        const newStaff = await Staff.create({
+        const staffData = {
             barbershop_id: barbershopId,
-            name,
+            name: name.trim(),
             picture: pictureUrl,
-            specialty,
+            specialty: specialty ? specialty.trim() : null,
             is_active: true,
+        };
+
+        console.log('7. Creating staff with data:', staffData);
+        const newStaff = await Staff.create(staffData);
+        console.log('✅ Staff created successfully:', newStaff.staff_id);
+
+        res.status(201).json({ 
+            message: 'Staf baru berhasil ditambahkan.', 
+            staff: newStaff 
         });
 
-        res.status(201).json({ message: 'Staf baru berhasil ditambahkan.', staff: newStaff });
     } catch (error) {
+        console.error('\n❌ === CREATE STAFF ERROR ===');
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+        console.error('=========================\n');
+        
+        // Hapus file jika ada error
         if (req.file) {
-            fs.unlinkSync(req.file.path);
+            try {
+                fs.unlinkSync(req.file.path);
+                console.log('🗑️ File deleted after error');
+            } catch (unlinkError) {
+                console.error('⚠️ Could not delete file:', unlinkError.message);
+            }
         }
-        res.status(403).json({ message: error.message });
+
+        // Send error response
+        const statusCode = error.message.includes('tidak ditemukan') ? 404 : 
+                          error.message.includes('tidak punya hak akses') ? 403 : 500;
+        
+        res.status(statusCode).json({ 
+            message: error.message || 'Internal server error',
+            error: process.env.NODE_ENV === 'development' ? {
+                name: error.name,
+                stack: error.stack
+            } : undefined
+        });
     }
 };
 
-// ✅ Mendapatkan semua staf dari barbershop tertentu
+// Mendapatkan semua staf dari barbershop tertentu
 exports.getStaff = async (req, res) => {
     try {
         const ownerId = req.user.id;
         const { barbershopId } = req.params;
+        
         await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
 
         const staffList = await Staff.findAll({ 
             where: { barbershop_id: barbershopId },
             order: [['createdAt', 'DESC']]
         });
+        
         res.status(200).json(staffList);
     } catch (error) {
-        res.status(403).json({ message: error.message });
+        console.error('Get Staff Error:', error);
+        res.status(500).json({ message: error.message });
     }
 };
 
-// ✅ Mengupdate data staf dengan upload foto baru
+// Mengupdate data staf dengan upload foto baru
 exports.updateStaff = async (req, res) => {
+    console.log('\n=== UPDATE STAFF DEBUG ===');
+    console.log('User:', req.user?.id);
+    console.log('Params:', req.params);
+    console.log('Body:', req.body);
+    console.log('File:', req.file ? req.file.filename : 'No file');
+    
     try {
         const ownerId = req.user.id;
         const { barbershopId, staffId } = req.params;
+
         await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
 
         const staff = await Staff.findOne({ 
@@ -149,32 +219,63 @@ exports.updateStaff = async (req, res) => {
         
         if (!staff) {
             if (req.file) fs.unlinkSync(req.file.path);
-            return res.status(404).json({ message: 'Staf tidak ditemukan atau Anda tidak punya hak akses.' });
+            return res.status(404).json({ message: 'Staf tidak ditemukan.' });
         }
 
-        const updateData = {};
-        if (req.body.name) updateData.name = req.body.name;
-        if (req.body.specialty !== undefined) updateData.specialty = req.body.specialty;
-
-        if (req.file) {
-            if (staff.picture) {
-                const oldPhotoPath = path.join(__dirname, '../../public', staff.picture);
-                if (fs.existsSync(oldPhotoPath)) {
-                    fs.unlinkSync(oldPhotoPath);
-                }
-            }
-            updateData.picture = `/uploads/staff-photos/${req.file.filename}`;
+        const { name, specialty } = req.body;
+        
+        // Update fields
+        if (name && name.trim() !== '') {
+            staff.name = name.trim();
         }
         
-        await staff.update(updateData);
-        res.status(200).json({ message: 'Data staf berhasil diperbarui.', staff });
+        if (specialty !== undefined) {
+            staff.specialty = specialty ? specialty.trim() : null;
+        }
+
+        // Update foto jika ada file baru
+        if (req.file) {
+            // Hapus foto lama jika ada
+            if (staff.picture) {
+                const oldPath = path.join(__dirname, '../../public', staff.picture);
+                if (fs.existsSync(oldPath)) {
+                    try {
+                        fs.unlinkSync(oldPath);
+                    } catch (err) {
+                        console.warn('Could not delete old photo:', err);
+                    }
+                }
+            }
+            staff.picture = `/uploads/staff-photos/${req.file.filename}`;
+            console.log('📸 Photo updated:', staff.picture);
+        }
+
+        await staff.save();
+        console.log('✅ Staff updated successfully');
+
+        res.status(200).json({ 
+            message: 'Data staf berhasil diperbarui.', 
+            staff 
+        });
+
     } catch (error) {
-        if (req.file) fs.unlinkSync(req.file.path);
-        res.status(403).json({ message: error.message });
+        console.error('❌ Update Staff Error:', error);
+        
+        if (req.file) {
+            try {
+                fs.unlinkSync(req.file.path);
+            } catch (unlinkError) {
+                console.error('Error deleting file:', unlinkError);
+            }
+        }
+
+        res.status(500).json({ 
+            message: error.message || 'Terjadi kesalahan saat memperbarui staff.'
+        });
     }
 };
 
-// ✅ FIXED: Menonaktifkan staf dengan cek konflik booking
+// Deactivate staff dengan cek konflik booking
 exports.deactivateStaff = async (req, res) => {
     try {
         const ownerId = req.user.id;
@@ -183,328 +284,217 @@ exports.deactivateStaff = async (req, res) => {
 
         await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
 
-        const staff = await Staff.findOne({ 
-            where: { staff_id: staffId, barbershop_id: barbershopId } 
+        const staff = await Staff.findOne({
+            where: { staff_id: staffId, barbershop_id: barbershopId }
         });
-        
+
         if (!staff) {
-            return res.status(404).json({ message: 'Staf tidak ditemukan atau Anda tidak punya hak akses.' });
+            return res.status(404).json({ message: 'Staff tidak ditemukan.' });
         }
 
         if (!staff.is_active) {
-            return res.status(400).json({ message: 'Staf sudah dalam status nonaktif.' });
+            return res.status(400).json({ message: 'Staff sudah nonaktif.' });
         }
 
-        // ✅ CEK KONFLIK BOOKING
-        const conflictCheck = await checkAffectedBookingsByStaff(staffId);
+        const affectedBookings = await checkAffectedBookingsByStaff(staffId);
 
-        if (conflictCheck.hasConflicts && !force_update) {
+        if (affectedBookings.hasConflicts && !force_update) {
             return res.status(409).json({
-                message: `Staff ${staff.name} memiliki booking yang akan datang`,
-                require_confirmation: true,
+                message: 'Staff memiliki booking yang akan datang.',
                 affected_bookings: {
-                    count: conflictCheck.count,
-                    details: conflictCheck.details,
-                    warning: 'Booking-booking ini perlu dipindahkan ke staff lain atau dibatalkan.'
+                    count: affectedBookings.count,
+                    details: affectedBookings.details,
+                    warning: 'Menonaktifkan staff akan mempengaruhi booking customer.'
                 }
             });
         }
 
-        await staff.update({ is_active: false });
-        
-        res.status(200).json({ 
-            message: 'Staf berhasil dinonaktifkan.', 
+        staff.is_active = false;
+        await staff.save();
+
+        res.status(200).json({
+            message: 'Staff berhasil dinonaktifkan.',
             staff,
-            affected_bookings: conflictCheck.hasConflicts ? {
-                count: conflictCheck.count,
-                message: 'Segera reassign booking ke staff lain atau hubungi customer.'
-            } : null
+            warning: affectedBookings.hasConflicts ? 
+                'Pastikan untuk menghubungi customer terkait perubahan ini.' : null
         });
+
     } catch (error) {
-        res.status(403).json({ message: error.message });
+        console.error('Deactivate Staff Error:', error);
+        res.status(500).json({ message: error.message });
     }
 };
 
-// ✅ Mengaktifkan kembali staf
+// Activate staff kembali
 exports.activateStaff = async (req, res) => {
     try {
         const ownerId = req.user.id;
         const { barbershopId, staffId } = req.params;
+
         await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
 
-        const staff = await Staff.findOne({ 
-            where: { staff_id: staffId, barbershop_id: barbershopId } 
+        const staff = await Staff.findOne({
+            where: { staff_id: staffId, barbershop_id: barbershopId }
         });
-        
+
         if (!staff) {
-            return res.status(404).json({ message: 'Staf tidak ditemukan atau Anda tidak punya hak akses.' });
-        }
-
-        await staff.update({ is_active: true });
-        res.status(200).json({ message: 'Staf berhasil diaktifkan kembali.', staff });
-    } catch (error) {
-        res.status(403).json({ message: error.message });
-    }
-};
-
-// ✅ Menghapus staf permanen (dengan cek konflik)
-exports.deleteStaff = async (req, res) => {
-    try {
-        const ownerId = req.user.id;
-        const { barbershopId, staffId } = req.params;
-        await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
-
-        const staff = await Staff.findOne({ 
-            where: { staff_id: staffId, barbershop_id: barbershopId } 
-        });
-        
-        if (!staff) {
-            return res.status(404).json({ message: 'Staf tidak ditemukan atau Anda tidak punya hak akses.' });
-        }
-
-        // ✅ CEK APAKAH ADA BOOKING (TERMASUK HISTORY)
-        const allBookings = await Booking.count({
-            where: { staff_id: staffId }
-        });
-
-        if (allBookings > 0) {
-            return res.status(400).json({ 
-                message: 'Tidak dapat menghapus staf yang memiliki riwayat booking. Gunakan fitur nonaktifkan sebagai gantinya.',
-                bookings_count: allBookings
-            });
-        }
-
-        // Hapus foto jika ada
-        if (staff.picture) {
-            const photoPath = path.join(__dirname, '../../public', staff.picture);
-            if (fs.existsSync(photoPath)) {
-                fs.unlinkSync(photoPath);
-            }
-        }
-
-        await staff.destroy();
-        res.status(200).json({ message: 'Staf berhasil dihapus permanen.' });
-    } catch (error) {
-        res.status(403).json({ message: error.message });
-    }
-};
-
-// ✅ NEW: Reassign booking dari staff yang dinonaktifkan ke staff lain
-exports.reassignBookings = async (req, res) => {
-    try {
-        const ownerId = req.user.id;
-        const { barbershopId, staffId } = req.params;
-        const { new_staff_id } = req.body;
-
-        await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
-
-        if (!new_staff_id) {
-            return res.status(400).json({ message: 'ID staff baru wajib disertakan.' });
-        }
-
-        // Cek staff baru ada dan aktif
-        const newStaff = await Staff.findOne({
-            where: { 
-                staff_id: new_staff_id, 
-                barbershop_id: barbershopId,
-                is_active: true
-            }
-        });
-
-        if (!newStaff) {
-            return res.status(404).json({ message: 'Staff baru tidak ditemukan atau tidak aktif.' });
-        }
-
-        // Ambil booking yang akan datang
-        const now = new Date();
-        const affectedBookings = await Booking.findAll({
-            where: {
-                staff_id: staffId,
-                status: {
-                    [Op.in]: ['confirmed', 'pending_payment']
-                },
-                booking_time: {
-                    [Op.gte]: now
-                }
-            }
-        });
-
-        // ✅ CEK KONFLIK JADWAL DENGAN STAFF BARU
-        const conflicts = [];
-        for (const booking of affectedBookings) {
-            const conflictingBooking = await Booking.findOne({
-                where: {
-                    staff_id: new_staff_id,
-                    status: { [Op.ne]: 'cancelled' },
-                    booking_time: { [Op.lt]: booking.end_time },
-                    end_time: { [Op.gt]: booking.booking_time }
-                }
-            });
-
-            if (conflictingBooking) {
-                conflicts.push({
-                    booking_id: booking.booking_id,
-                    booking_time: booking.booking_time,
-                    reason: 'Staff baru sudah memiliki booking pada waktu yang sama'
-                });
-            }
-        }
-
-        if (conflicts.length > 0) {
-            return res.status(409).json({
-                message: 'Beberapa booking tidak dapat dipindahkan karena konflik jadwal',
-                conflicts,
-                successful_count: affectedBookings.length - conflicts.length,
-                failed_count: conflicts.length
-            });
-        }
-
-        // Update semua booking
-        await Booking.update(
-            { staff_id: new_staff_id },
-            {
-                where: {
-                    staff_id: staffId,
-                    status: {
-                        [Op.in]: ['confirmed', 'pending_payment']
-                    },
-                    booking_time: {
-                        [Op.gte]: now
-                    }
-                }
-            }
-        );
-
-        res.status(200).json({
-            message: `Berhasil memindahkan ${affectedBookings.length} booking ke ${newStaff.name}`,
-            reassigned_count: affectedBookings.length
-        });
-    } catch (error) {
-        console.error('Reassign bookings error:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
-    }
-};
-
-exports.reassignBookings = async (req, res) => {
-    try {
-        const ownerId = req.user.id;
-        const { barbershopId, staffId } = req.params;
-        const { new_staff_id } = req.body;
-
-        console.log('🔄 REASSIGN REQUEST:', { barbershopId, staffId, new_staff_id });
-
-        await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
-
-        if (!new_staff_id) {
-            return res.status(400).json({ message: 'ID staff baru wajib disertakan.' });
-        }
-
-        // ✅ Validasi staff lama exists
-        const oldStaff = await Staff.findOne({
-            where: { 
-                staff_id: staffId, 
-                barbershop_id: barbershopId
-            }
-        });
-
-        if (!oldStaff) {
             return res.status(404).json({ message: 'Staff tidak ditemukan.' });
         }
 
-        // ✅ Cek staff baru ada dan aktif
+        if (staff.is_active) {
+            return res.status(400).json({ message: 'Staff sudah aktif.' });
+        }
+
+        staff.is_active = true;
+        await staff.save();
+
+        res.status(200).json({
+            message: 'Staff berhasil diaktifkan kembali.',
+            staff
+        });
+
+    } catch (error) {
+        console.error('Activate Staff Error:', error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// Reassign bookings dari satu staff ke staff lain
+exports.reassignBookings = async (req, res) => {
+    try {
+        const ownerId = req.user.id;
+        const { barbershopId, staffId } = req.params;
+        const { new_staff_id } = req.body;
+
+        console.log('🔄 Reassign Request:', {
+            barbershopId,
+            oldStaffId: staffId,
+            newStaffId: new_staff_id
+        });
+
+        if (!new_staff_id) {
+            return res.status(400).json({ message: 'Staff pengganti harus dipilih.' });
+        }
+
+        await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
+
+        const oldStaff = await Staff.findOne({
+            where: { staff_id: staffId, barbershop_id: barbershopId }
+        });
+
+        if (!oldStaff) {
+            return res.status(404).json({ message: 'Staff lama tidak ditemukan.' });
+        }
+
         const newStaff = await Staff.findOne({
-            where: { 
-                staff_id: new_staff_id, 
-                barbershop_id: barbershopId,
-                is_active: true
-            }
+            where: { staff_id: new_staff_id, barbershop_id: barbershopId, is_active: true }
         });
 
         if (!newStaff) {
-            return res.status(404).json({ message: 'Staff baru tidak ditemukan atau tidak aktif.' });
+            return res.status(404).json({ message: 'Staff pengganti tidak ditemukan atau tidak aktif.' });
         }
 
-        // ✅ Ambil booking yang akan datang dari staff lama
-        const now = new Date();
-        const affectedBookings = await Booking.findAll({
-            where: {
-                staff_id: staffId,
-                status: {
-                    [Op.in]: ['confirmed', 'pending_payment']
-                },
-                booking_time: {
-                    [Op.gte]: now
-                }
-            },
-            order: [['booking_time', 'ASC']]
-        });
+        const affectedBookings = await checkAffectedBookingsByStaff(staffId);
 
-        console.log(`📋 Found ${affectedBookings.length} bookings to reassign`);
-
-        if (affectedBookings.length === 0) {
-            return res.status(200).json({
-                message: 'Tidak ada booking yang perlu dipindahkan',
+        if (!affectedBookings.hasConflicts) {
+            return res.status(200).json({ 
+                message: 'Tidak ada booking yang perlu di-reassign.',
                 reassigned_count: 0
             });
         }
 
-        // ✅ CEK KONFLIK JADWAL DENGAN STAFF BARU
-        const conflicts = [];
-        for (const booking of affectedBookings) {
-            const conflictingBooking = await Booking.findOne({
-                where: {
-                    staff_id: new_staff_id,
-                    status: { [Op.ne]: 'cancelled' },
-                    booking_time: { [Op.lt]: booking.end_time },
-                    end_time: { [Op.gt]: booking.booking_time }
+        const newStaffBookingTimes = await Booking.findAll({
+            where: {
+                staff_id: new_staff_id,
+                status: { [Op.in]: ['confirmed', 'pending_payment'] },
+                booking_time: {
+                    [Op.in]: affectedBookings.bookings.map(b => b.booking_time)
                 }
-            });
-
-            if (conflictingBooking) {
-                conflicts.push({
-                    booking_id: booking.booking_id,
-                    booking_time: booking.booking_time.toLocaleString('id-ID'),
-                    reason: 'Staff baru sudah memiliki booking pada waktu yang sama'
-                });
             }
-        }
+        });
 
-        if (conflicts.length > 0) {
-            console.log('⚠️ CONFLICTS DETECTED:', conflicts);
+        if (newStaffBookingTimes.length > 0) {
             return res.status(409).json({
-                message: 'Beberapa booking tidak dapat dipindahkan karena konflik jadwal',
-                conflicts,
-                successful_count: 0,
-                failed_count: conflicts.length
+                message: 'Staff pengganti memiliki konflik jadwal.',
+                conflicts: newStaffBookingTimes.length
             });
         }
 
-        // ✅ Update semua booking
-        const [updatedCount] = await Booking.update(
+        const updateResult = await Booking.update(
             { staff_id: new_staff_id },
             {
                 where: {
                     staff_id: staffId,
-                    status: {
-                        [Op.in]: ['confirmed', 'pending_payment']
-                    },
-                    booking_time: {
-                        [Op.gte]: now
-                    }
+                    status: { [Op.in]: ['confirmed', 'pending_payment'] },
+                    booking_time: { [Op.gte]: new Date() }
                 }
             }
         );
 
-        console.log(`✅ Successfully reassigned ${updatedCount} bookings`);
+        console.log('✅ Bookings reassigned:', updateResult[0]);
 
         res.status(200).json({
-            message: `Berhasil memindahkan ${updatedCount} booking dari ${oldStaff.name} ke ${newStaff.name}`,
-            reassigned_count: updatedCount,
-            old_staff: oldStaff.name,
-            new_staff: newStaff.name
+            message: `${updateResult[0]} booking berhasil dipindahkan ke ${newStaff.name}.`,
+            reassigned_count: updateResult[0],
+            from_staff: oldStaff.name,
+            to_staff: newStaff.name
         });
+
     } catch (error) {
-        console.error('❌ Reassign bookings error:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
+        console.error('❌ Reassign Bookings Error:', error);
+        res.status(500).json({ 
+            message: error.message || 'Terjadi kesalahan saat reassign booking.'
+        });
+    }
+};
+
+// Hapus staff permanen
+exports.deleteStaff = async (req, res) => {
+    try {
+        const ownerId = req.user.id;
+        const { barbershopId, staffId } = req.params;
+
+        await verifyOwnerAndGetBarbershop(ownerId, barbershopId);
+
+        const staff = await Staff.findOne({
+            where: { staff_id: staffId, barbershop_id: barbershopId }
+        });
+
+        if (!staff) {
+            return res.status(404).json({ message: 'Staff tidak ditemukan.' });
+        }
+
+        const hasActiveBookings = await Booking.count({
+            where: {
+                staff_id: staffId,
+                status: { [Op.in]: ['confirmed', 'pending_payment'] },
+                booking_time: { [Op.gte]: new Date() }
+            }
+        });
+
+        if (hasActiveBookings > 0) {
+            return res.status(400).json({
+                message: 'Tidak dapat menghapus staff yang masih memiliki booking aktif.'
+            });
+        }
+
+        if (staff.picture) {
+            const photoPath = path.join(__dirname, '../../public', staff.picture);
+            if (fs.existsSync(photoPath)) {
+                try {
+                    fs.unlinkSync(photoPath);
+                } catch (err) {
+                    console.warn('Could not delete photo:', err);
+                }
+            }
+        }
+
+        await staff.destroy();
+
+        res.status(200).json({ message: 'Staff berhasil dihapus.' });
+
+    } catch (error) {
+        console.error('Delete Staff Error:', error);
+        res.status(500).json({ message: error.message });
     }
 };

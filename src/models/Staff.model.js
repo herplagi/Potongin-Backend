@@ -1,7 +1,6 @@
-// src/models/Staff.model.js
+// src/models/Staff.model.js - FIXED VERSION
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
-const Barbershop = require('./Barbershop.model');
 
 const Staff = sequelize.define('Staff', {
   staff_id: {
@@ -12,6 +11,10 @@ const Staff = sequelize.define('Staff', {
   barbershop_id: { 
     type: DataTypes.UUID,
     allowNull: false,
+    references: {
+      model: 'barbershops',
+      key: 'barbershop_id'
+    }
   },
   name: {
     type: DataTypes.STRING,
@@ -34,9 +37,5 @@ const Staff = sequelize.define('Staff', {
   tableName: 'staff',
   timestamps: true,
 });
-
-// relasi: 
-Staff.belongsTo(Barbershop, { foreignKey: 'barbershop_id' });
-Barbershop.hasMany(Staff, { foreignKey: 'barbershop_id', as: 'staff' });
 
 module.exports = Staff;

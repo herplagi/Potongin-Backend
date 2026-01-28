@@ -1,7 +1,11 @@
-// src/controllers/user.controller.js
+// backend/src/controllers/user.controller.js - ADD THESE METHODS
+
 const User = require('../models/User.model');
 const bcrypt = require('bcryptjs');
+const path = require('path');
+const fs = require('fs');
 
+// Existing methods...
 exports.updateProfile = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -16,7 +20,6 @@ exports.updateProfile = async (req, res) => {
             return res.status(404).json({ message: 'User tidak ditemukan.' });
         }
 
-        // Cek apakah nomor telepon sudah digunakan user lain
         if (phone_number !== user.phone_number) {
             const existingUser = await User.findOne({ 
                 where: { 
@@ -67,13 +70,11 @@ exports.changePassword = async (req, res) => {
             return res.status(404).json({ message: 'User tidak ditemukan.' });
         }
 
-        // Verifikasi password lama
         const isPasswordValid = await bcrypt.compare(current_password, user.password);
         if (!isPasswordValid) {
             return res.status(401).json({ message: 'Password lama tidak sesuai.' });
         }
 
-        // Hash password baru
         const hashedPassword = await bcrypt.hash(new_password, 10);
         await user.update({ password: hashedPassword });
 
@@ -83,3 +84,65 @@ exports.changePassword = async (req, res) => {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
+
+// ✅ NEW: Upload profile picture
+exports.uploadProfilePicture = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        if (!req.file) {
+            return res.status(400).json({ message: 'File gambar tidak ditemukan' });
+        }
+
+        const user = await User.findByPk(userId);
+        if (!user) {
+            return res.status(404).json({ message: 'User tidak ditemukan' });
+        }
+
+        // Hapus foto lama jika ada
+        if (user.picture) {
+            const oldPicturePath = path.join(__dirname, '../../public', user.picture);
+            if (fs.existsSync(oldPicturePath)) {
+                fs.unlinkSync(oldPicturePath);
+            }
+        }
+
+        // Simpan path foto baru
+        const pictureUrl = `/uploads/profile-pictures/${req.file.filename}`;
+        await user.update({ picture: pictureUrl });
+
+        const userResponse = user.toJSON();
+        delete userResponse.password;
+
+        res.status(200).json({
+            message: 'Foto profil berhasil diupload',
+            user: userResponse,
+            picture_url: pictureUrl
+        });
+    } catch (error) {
+        console.error('Upload profile picture error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
+
+// ✅ NEW: Get current user profile
+exports.getMyProfile = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        const user = await User.findByPk(userId, {
+            attributes: { exclude: ['password', 'reset_token', 'reset_token_expires'] }
+        });
+
+        if (!user) {
+            return res.status(404).json({ message: 'User tidak ditemukan' });
+        }
+
+        res.status(200).json(user);
+    } catch (error) {
+        console.error('Get profile error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
+
+module.exports = exports;

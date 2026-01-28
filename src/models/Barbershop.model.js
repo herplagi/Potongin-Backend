@@ -1,4 +1,4 @@
-// src/models/Barbershop.model.js
+// src/models/Barbershop.model.js - TAMBAHKAN DI AKHIR FILE
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const User = require('./User.model');
@@ -41,32 +41,31 @@ const Barbershop = sequelize.define('Barbershop', {
     allowNull: true,
   },
   latitude: {
-    type: DataTypes.DECIMAL(10, 8), // Format umum untuk latitude
-    allowNull: true, // Bisa diisi nanti oleh owner
+    type: DataTypes.DECIMAL(10, 8),
+    allowNull: true,
   },
   longitude: {
-    type: DataTypes.DECIMAL(11, 8), // Format umum untuk longitude
-    allowNull: true, // Bisa diisi nanti oleh owner
+    type: DataTypes.DECIMAL(11, 8),
+    allowNull: true,
   },
-  // --- TAMBAHKAN KOLOM BARU INI ---
   main_image_url: {
     type: DataTypes.STRING,
-    allowNull: true, // Boleh kosong, diisi nanti oleh owner
+    allowNull: true,
   },
   description: {
     type: DataTypes.TEXT,
-    allowNull: true, // Boleh kosong
+    allowNull: true,
     defaultValue: null,
     comment: 'Deskripsi barbershop, bisa berisi fasilitas, suasana, dll.'
   }
-  // -----------------------------
 }, { tableName: 'barbershops', timestamps: true });
 
+// User relations
 Barbershop.belongsTo(User, { foreignKey: 'owner_id', as: 'owner' });
 Barbershop.belongsTo(User, { foreignKey: 'verified_by', as: 'verifier' });
 
+// Facilities relations
 const BarbershopFacility = require('./BarbershopFacility.model');
-// Many-to-Many relationship
 Barbershop.belongsToMany(BarbershopFacility, {
   through: 'BarbershopHasFacility',
   as: 'facilities',
@@ -78,6 +77,16 @@ BarbershopFacility.belongsToMany(Barbershop, {
   through: 'BarbershopHasFacility',
   foreignKey: 'facility_id',
   otherKey: 'barbershop_id',
+});
+
+// ✅ Staff relations - TAMBAHKAN INI
+const Staff = require('./Staff.model');
+Barbershop.hasMany(Staff, { 
+  foreignKey: 'barbershop_id', 
+  as: 'staff' 
+});
+Staff.belongsTo(Barbershop, { 
+  foreignKey: 'barbershop_id' 
 });
 
 module.exports = Barbershop;

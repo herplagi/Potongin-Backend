@@ -107,31 +107,44 @@ exports.createReview = async (req, res) => {
 exports.getMyReviews = async (req, res) => {
   try {
     const customerId = req.user.id;
+    const { page = 1, limit = 10 } = req.query;
+    const offset = (page - 1) * limit;
 
-    const reviews = await Review.findAll({
+    const { count, rows: reviews } = await Review.findAndCountAll({
       where: { customer_id: customerId },
       include: [
         {
           model: Barbershop,
-          attributes: ["barbershop_id", "name", "city"],
+          attributes: ['barbershop_id', 'name', 'city', 'main_image_url'],
         },
         {
           model: Booking,
+          attributes: ['booking_id', 'booking_time', 'status'],
           include: [
             {
               model: Service,
-              attributes: ["name", "price"],
+              attributes: ['service_id', 'name', 'price'],
             },
           ],
         },
       ],
-      order: [["createdAt", "DESC"]],
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset),
     });
 
-    res.status(200).json(reviews);
+    res.status(200).json({
+      reviews,
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(count / limit),
+      },
+    });
   } catch (error) {
-    console.error("Get my reviews error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error('Get my reviews error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
