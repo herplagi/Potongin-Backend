@@ -1332,4 +1332,131 @@ exports.updateBarbershopFacilities = async (req, res) => {
   }
 };
 
+exports.deleteBarbershop = async (req, res) => {
+  let transaction;
+  try {
+    const { barbershopId } = req.params;
+    const userId = req.user.id;
+
+    // Start transaction
+    transaction = await sequelize.transaction();
+
+    // Cek apakah barbershop ada dan milik user ini
+    const barbershop = await sequelize.query(
+      `SELECT * FROM barbershops WHERE barbershop_id = ? AND owner_id = ?`,
+      {
+        replacements: [barbershopId, userId],
+        type: sequelize.QueryTypes.SELECT,
+        transaction,
+      }
+    );
+
+    if (!barbershop || barbershop.length === 0) {
+      await transaction.rollback();
+      return res.status(404).json({
+        message: "Barbershop tidak ditemukan atau Anda tidak memiliki akses.",
+      });
+    }
+
+    const shopData = barbershop[0];
+
+    // Cek apakah ada booking aktif
+    const activeBookings = await sequelize.query(
+      `SELECT COUNT(*) as count FROM bookings 
+       WHERE barbershop_id = ? 
+       AND status IN ('pending', 'confirmed')`,
+      {
+        replacements: [barbershopId],
+        type: sequelize.QueryTypes.SELECT,
+        transaction,
+      }
+    );
+
+    if (activeBookings[0].count > 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        message: `Tidak dapat menghapus barbershop yang memiliki ${activeBookings[0].count} booking aktif.`,
+      });
+    }
+
+    // Kumpulkan file untuk dihapus nanti
+    const filesToDelete = [];
+    if (shopData.ktp_url) {
+      filesToDelete.push(path.join(__dirname, "../../public", shopData.ktp_url));
+    }
+    if (shopData.permit_url) {
+      filesToDelete.push(path.join(__dirname, "../../public", shopData.permit_url));
+    }
+    if (shopData.main_image_url) {
+      filesToDelete.push(path.join(__dirname, "../../public", shopData.main_image_url));
+    }
+
+    // Delete related data
+    const deletionSteps = [
+      { name: 'BarbershopHasFacility', query: 'DELETE FROM BarbershopHasFacility WHERE barbershop_id = ?' },
+      { name: 'BarbershopGallery', query: 'DELETE FROM BarbershopGallery WHERE barbershop_id = ?' },
+      { name: 'reviews', query: 'DELETE FROM reviews WHERE barbershop_id = ?' },
+      { name: 'bookings', query: 'DELETE FROM bookings WHERE barbershop_id = ?' },
+      { name: 'services', query: 'DELETE FROM services WHERE barbershop_id = ?' },
+      { name: 'staff', query: 'DELETE FROM staff WHERE barbershop_id = ?' },
+      { name: 'WorkingHours', query: 'DELETE FROM WorkingHours WHERE barbershop_id = ?' },
+    ];
+
+    // Eksekusi penghapusan
+    for (const step of deletionSteps) {
+      try {
+        await sequelize.query(step.query, {
+          replacements: [barbershopId],
+          transaction,
+        });
+      } catch (err) {
+        // Continue deletion process even if some tables are empty
+      }
+    }
+
+    // Hapus barbershop terakhir
+    await sequelize.query(
+      `DELETE FROM barbershops WHERE barbershop_id = ?`,
+      {
+        replacements: [barbershopId],
+        transaction,
+      }
+    );
+
+    // Commit transaction
+    await transaction.commit();
+
+    // Hapus file setelah database berhasil
+    filesToDelete.forEach((filePath) => {
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (err) {
+        // File deletion error, but database already cleaned
+      }
+    });
+
+    return res.json({
+      message: "Barbershop berhasil dihapus.",
+      deletedBarbershop: shopData.name,
+    });
+
+  } catch (error) {
+    // Rollback jika ada error
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        // Rollback failed, but log to monitoring system in production
+      }
+    }
+
+    return res.status(500).json({
+      message: "Terjadi kesalahan saat menghapus barbershop.",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = exports;

@@ -127,6 +127,11 @@ router.post(
   ownerMiddleware,
   BarbershopController.updateBarbershopFacilities
 );
+router.delete(
+  "/:barbershopId",
+  ownerMiddleware,
+  BarbershopController.deleteBarbershop
+);
 
 // =================================================================
 // --- NESTED ROUTES (Harus di paling bawah) ---
