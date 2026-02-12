@@ -715,11 +715,12 @@ exports.expirePendingBookings = async () => {
 };
 
 // ✅ CHECK AVAILABILITY - untuk BookingPage
+// ✅ CHECK AVAILABILITY - untuk BookingPage
 exports.checkAvailability = async (req, res) => {
   try {
-    const { barbershop_id, date, time } = req.query;
+    const { barbershop_id, date, time, service_id } = req.query;
 
-    console.log('🔍 Checking availability:', { barbershop_id, date, time });
+    console.log('🔍 Checking availability:', { barbershop_id, date, time, service_id });
 
     if (!barbershop_id || !date) {
       return res.status(400).json({ 
@@ -740,16 +741,26 @@ exports.checkAvailability = async (req, res) => {
       });
     }
 
+    // Get service duration (if service_id provided)
+    let durationMinutes = 60; // default 1 hour
+    if (service_id) {
+      const service = await Service.findByPk(service_id);
+      if (service) {
+        durationMinutes = service.duration_minutes;
+        console.log(`📏 Using service duration: ${durationMinutes} minutes`);
+      }
+    }
+
     // If time is specified, check which staff are unavailable at that time
     if (time) {
       const bookingDateTime = new Date(`${date}T${time}:00`);
-      const oneHourLater = new Date(bookingDateTime.getTime() + 60 * 60000);
+      const bookingEndTime = new Date(bookingDateTime.getTime() + durationMinutes * 60000);
 
       const conflictingBookings = await Booking.findAll({
         where: {
           barbershop_id: barbershop_id,
           status: { [Op.notIn]: ['cancelled', 'no_show'] },
-          booking_time: { [Op.lt]: oneHourLater },
+          booking_time: { [Op.lt]: bookingEndTime },
           end_time: { [Op.gt]: bookingDateTime },
         },
         attributes: ['staff_id']
@@ -778,25 +789,40 @@ exports.checkAvailability = async (req, res) => {
           [Op.between]: [startOfDay, endOfDay]
         }
       },
-      attributes: ['booking_time', 'staff_id']
+      include: [
+        { model: Service, attributes: ['duration_minutes'] }
+      ],
+      attributes: ['booking_id', 'booking_time', 'end_time', 'staff_id']
     });
 
-    // Group bookings by hour
-    const bookingsByHour = {};
+    // Group bookings by time slots considering service duration
+    const bookingsByTimeSlot = {};
+    
     bookingsForDay.forEach(booking => {
-      const hour = new Date(booking.booking_time).toTimeString().substring(0, 5);
-      if (!bookingsByHour[hour]) {
-        bookingsByHour[hour] = [];
+      const bookingStart = new Date(booking.booking_time);
+      const bookingEnd = new Date(booking.end_time);
+      
+      // Generate all time slots that this booking occupies
+      let currentSlot = new Date(bookingStart);
+      currentSlot.setMinutes(Math.floor(currentSlot.getMinutes() / 60) * 60); // Round to hour
+      
+      while (currentSlot < bookingEnd) {
+        const timeSlot = currentSlot.toTimeString().substring(0, 5);
+        if (!bookingsByTimeSlot[timeSlot]) {
+          bookingsByTimeSlot[timeSlot] = new Set();
+        }
+        bookingsByTimeSlot[timeSlot].add(booking.staff_id);
+        
+        currentSlot.setMinutes(currentSlot.getMinutes() + 60); // Next hour slot
       }
-      bookingsByHour[hour].push(booking.staff_id);
     });
 
     // Find hours where all staff are booked
     const fullyBookedTimes = [];
-    Object.keys(bookingsByHour).forEach(hour => {
-      const bookedStaffCount = new Set(bookingsByHour[hour]).size;
+    Object.keys(bookingsByTimeSlot).forEach(timeSlot => {
+      const bookedStaffCount = bookingsByTimeSlot[timeSlot].size;
       if (bookedStaffCount >= allStaff.length) {
-        fullyBookedTimes.push(hour);
+        fullyBookedTimes.push(timeSlot);
       }
     });
 
@@ -813,6 +839,161 @@ exports.checkAvailability = async (req, res) => {
       message: "Server error", 
       error: process.env.NODE_ENV === 'development' ? error.message : undefined 
     });
+  }
+};
+
+exports.rescheduleBooking = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { new_booking_time } = req.body;
+    const customerId = req.user.id;
+
+    console.log('🔄 Reschedule request:', { bookingId, new_booking_time, customerId });
+
+    if (!new_booking_time) {
+      return res.status(400).json({ message: "Waktu booking baru diperlukan" });
+    }
+
+    // Find booking
+    const booking = await Booking.findOne({
+      where: {
+        booking_id: bookingId,
+        customer_id: customerId,
+        status: 'confirmed',
+      },
+      include: [
+        { model: Service, attributes: ['name', 'duration_minutes', 'price'] },
+        { model: Barbershop, attributes: ['name'] },
+      ],
+    });
+
+    if (!booking) {
+      return res.status(404).json({
+        message: "Booking tidak ditemukan atau tidak dapat di-reschedule",
+      });
+    }
+
+    // Check if can reschedule
+    const { canReschedule, shouldBeNoShow, isLateForCheckIn } = require('../helpers/bookingHelpers');
+    
+    if (shouldBeNoShow(booking)) {
+      // Terlambat kedua kali - mark as no show
+      await booking.update({ status: 'no_show' });
+      
+      await NotificationService.sendNoShowNotification(
+        booking.barbershop_id,
+        booking.booking_id
+      );
+      
+      return res.status(400).json({
+        message: "Booking Anda telah hangus karena terlambat check-in untuk kedua kalinya",
+        status: 'no_show'
+      });
+    }
+
+    if (!canReschedule(booking)) {
+      return res.status(400).json({
+        message: "Booking ini tidak dapat di-reschedule. Anda hanya dapat reschedule satu kali.",
+      });
+    }
+
+    // Validate new booking time
+    const newBookingStartTime = new Date(new_booking_time);
+    const newBookingEndTime = new Date(newBookingStartTime.getTime() + booking.Service.duration_minutes * 60000);
+
+    if (newBookingStartTime < new Date()) {
+      return res.status(400).json({ message: "Tidak dapat reschedule ke waktu yang sudah lewat" });
+    }
+
+    // Check staff availability for new time
+    const conflictingBooking = await Booking.findOne({
+      where: {
+        staff_id: booking.staff_id,
+        status: { [Op.notIn]: ['cancelled', 'no_show'] },
+        booking_time: { [Op.lt]: newBookingEndTime },
+        end_time: { [Op.gt]: newBookingStartTime },
+        booking_id: { [Op.ne]: bookingId }, // Exclude current booking
+      },
+    });
+
+    if (conflictingBooking) {
+      return res.status(409).json({
+        message: "Staff tidak tersedia pada waktu yang dipilih. Silakan pilih waktu lain.",
+      });
+    }
+
+    // Save original booking time if first reschedule
+    const originalTime = booking.original_booking_time || booking.booking_time;
+
+    // Update booking
+    await booking.update({
+      original_booking_time: originalTime,
+      booking_time: newBookingStartTime,
+      end_time: newBookingEndTime,
+      reschedule_count: booking.reschedule_count + 1,
+      reschedule_reason: 'late_checkin',
+      // Regenerate check-in credentials
+      check_in_code: generateCheckInPIN(),
+      qr_code_token: generateQRToken(bookingId),
+    });
+
+    // Send notification
+    await NotificationService.sendBookingRescheduled(
+      customerId,
+      bookingId,
+      {
+        oldTime: originalTime,
+        newTime: newBookingStartTime,
+        pin: booking.check_in_code,
+        qrToken: booking.qr_code_token,
+      }
+    );
+
+    console.log(`✅ Booking ${bookingId} rescheduled successfully`);
+
+    res.status(200).json({
+      message: "Booking berhasil di-reschedule. Ini adalah kesempatan terakhir Anda!",
+      booking: formatBookingResponse(booking),
+      warning: "Jika Anda terlambat lagi, booking akan otomatis dibatalkan (no-show).",
+    });
+  } catch (error) {
+    console.error("❌ Reschedule booking error:", error);
+    res.status(500).json({
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// ✅✅✅ NEW: CHECK RESCHEDULE STATUS
+exports.checkRescheduleStatus = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const customerId = req.user.id;
+
+    const booking = await Booking.findOne({
+      where: {
+        booking_id: bookingId,
+        customer_id: customerId,
+      },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking tidak ditemukan" });
+    }
+
+    const { canReschedule, shouldBeNoShow, isLateForCheckIn } = require('../helpers/bookingHelpers');
+
+    res.status(200).json({
+      can_reschedule: canReschedule(booking),
+      should_be_no_show: shouldBeNoShow(booking),
+      is_late: isLateForCheckIn(booking.booking_time),
+      reschedule_count: booking.reschedule_count,
+      status: booking.status,
+    });
+  } catch (error) {
+    console.error("❌ Check reschedule status error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 

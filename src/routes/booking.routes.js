@@ -1,4 +1,4 @@
-// backend/src/routes/booking.routes.js
+// backend/src/routes/booking.routes.js - COMPLETE & TESTED
 const express = require('express');
 const router = express.Router();
 const BookingController = require('../controllers/booking.controller');
@@ -10,42 +10,49 @@ const customerMiddleware = [authMiddleware, checkRole('customer')];
 const ownerMiddleware = [authMiddleware, checkRole('owner')];
 
 // ============================================
+// TEST ROUTE (HAPUS SETELAH TESTING SELESAI)
+// ============================================
+router.all('/test', (req, res) => {
+  res.json({ message: 'Booking routes loaded successfully!', method: req.method });
+});
+
+// ============================================
+// PUBLIC ROUTES
+// ============================================
+router.post('/payment-notification', BookingController.handlePaymentNotification);
+
+// ============================================
+// GENERAL AUTHENTICATED ROUTES
+// ============================================
+router.get('/check-availability', authMiddleware, BookingController.checkAvailability);
+
+// ============================================
 // CUSTOMER ROUTES
 // ============================================
 
-// ✅ CHECK AVAILABILITY (HARUS DI ATAS ROUTES LAIN!)
-router.get('/check-availability', authMiddleware, BookingController.checkAvailability);
-
-// Create booking
+// Create & get bookings
 router.post('/', customerMiddleware, BookingController.createBooking);
-
-// Get my bookings
 router.get('/my-bookings', customerMiddleware, BookingController.getMyBookings);
 
-// ✅✅✅ NEW: Check-in routes
+// Check-in
 router.post('/check-in/qr', customerMiddleware, BookingController.checkInWithQR);
 router.post('/check-in/pin', customerMiddleware, BookingController.checkInWithPIN);
 
-// ✅✅✅ NEW: Confirm service completed
+// ✅✅✅ RESCHEDULE & CONFIRM (BEFORE GENERIC :bookingId ROUTES)
+router.get('/:bookingId/reschedule-status', customerMiddleware, BookingController.checkRescheduleStatus);
+router.post('/:bookingId/reschedule', customerMiddleware, BookingController.rescheduleBooking);
 router.post('/:bookingId/confirm-completed', customerMiddleware, BookingController.confirmServiceCompleted);
 
 // ============================================
-// OWNER ROUTES
+// OWNER ROUTES (NESTED PATHS FIRST)
 // ============================================
-
-// Get barbershop bookings
-router.get('/:barbershopId', ownerMiddleware, BookingController.getOwnerBookings);
-
-// ✅✅✅ NEW: Service management routes
 router.post('/:barbershopId/bookings/:bookingId/start', ownerMiddleware, BookingController.startService);
 router.post('/:barbershopId/bookings/:bookingId/complete', ownerMiddleware, BookingController.completeService);
-
-// Update booking status (backward compatibility)
 router.patch('/:barbershopId/bookings/:bookingId/status', ownerMiddleware, BookingController.updateBookingStatus);
 
-// ============================================
-// PAYMENT WEBHOOK (no auth)
-// ============================================
-router.post('/payment-notification', BookingController.handlePaymentNotification);
+// Get barbershop bookings (MUST BE LAST - generic param)
+router.get('/:barbershopId', ownerMiddleware, BookingController.getOwnerBookings);
+
+console.log('✅ Booking routes initialized');
 
 module.exports = router;

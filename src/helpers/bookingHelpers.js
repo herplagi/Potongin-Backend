@@ -61,3 +61,36 @@ exports.formatBookingResponse = (booking) => {
         canReview: booking.status === 'completed',
     };
 };
+
+/**
+ * Cek apakah booking terlambat untuk check-in
+ */
+exports.isLateForCheckIn = (bookingTime) => {
+    const now = new Date();
+    const bookingDate = new Date(bookingTime);
+    const lateCheckIn = new Date(bookingDate.getTime() + 15 * 60000);  // 15 min setelah
+    
+    return now > lateCheckIn;
+};
+
+/**
+ * Cek apakah booking bisa di-reschedule
+ */
+exports.canReschedule = (booking) => {
+    const isLate = exports.isLateForCheckIn(booking.booking_time);
+    const hasNotRescheduled = booking.reschedule_count === 0;
+    const isConfirmed = booking.status === 'confirmed';
+    
+    return isLate && hasNotRescheduled && isConfirmed;
+};
+
+/**
+ * Cek apakah booking harus menjadi no-show
+ */
+exports.shouldBeNoShow = (booking) => {
+    const isLate = exports.isLateForCheckIn(booking.booking_time);
+    const alreadyRescheduled = booking.reschedule_count >= 1;
+    const isConfirmed = booking.status === 'confirmed';
+    
+    return isLate && alreadyRescheduled && isConfirmed;
+};

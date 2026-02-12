@@ -102,7 +102,7 @@ class NotificationService {
         "booking_created",
         "📝 Booking Berhasil Dibuat",
         "Booking Anda telah dibuat. Silakan lanjutkan pembayaran untuk mengkonfirmasi.",
-        { booking_id: bookingId }
+        { booking_id: bookingId },
       );
       console.log(`📨 Booking created notification sent to user ${customerId}`);
     } catch (error) {
@@ -235,7 +235,7 @@ class NotificationService {
           booking_id: bookingId,
           check_in_pin: credentials.pin,
           qr_token: credentials.qrToken,
-        }
+        },
       );
       console.log(`📨 Booking confirmed notification sent to user ${userId}`);
     } catch (error) {
@@ -257,7 +257,7 @@ class NotificationService {
           {
             booking_id: bookingId,
             barbershop_id: barbershopId,
-          }
+          },
         );
         console.log(
           `📨 Check-in notification sent to owner ${barbershop.owner_id}`,
@@ -276,7 +276,7 @@ class NotificationService {
         "service_started",
         "💈 Layanan Dimulai",
         "Staff sedang melayani Anda. Nikmati layanan kami!",
-        { booking_id: bookingId }
+        { booking_id: bookingId },
       );
       console.log(`📨 Service started notification sent to user ${userId}`);
     } catch (error) {
@@ -295,7 +295,7 @@ class NotificationService {
         {
           booking_id: bookingId,
           action_required: true,
-        }
+        },
       );
       console.log(`📨 Service completed notification sent to user ${userId}`);
     } catch (error) {
@@ -311,7 +311,7 @@ class NotificationService {
         "booking_auto_completed",
         "✅ Booking Selesai",
         "Booking Anda telah dikonfirmasi selesai secara otomatis. Terima kasih!",
-        { booking_id: bookingId }
+        { booking_id: bookingId },
       );
     } catch (error) {
       console.error("Error sending auto-completed notification:", error);
@@ -322,7 +322,7 @@ class NotificationService {
   static async sendNoShowNotification(barbershopId, bookingId) {
     try {
       const barbershop = await Barbershop.findByPk(barbershopId);
-      
+
       if (barbershop) {
         await this.createNotification(
           barbershop.owner_id,
@@ -332,7 +332,7 @@ class NotificationService {
           {
             booking_id: bookingId,
             barbershop_id: barbershopId,
-          }
+          },
         );
       }
     } catch (error) {
@@ -351,10 +351,92 @@ class NotificationService {
         {
           booking_id: bookingId,
           check_in_code: checkInCode,
-        }
+        },
       );
     } catch (error) {
       console.error("Error sending reminder notification:", error);
+    }
+  }
+
+  /**
+   * ✅ Send booking rescheduled notification
+   */
+  static async sendBookingRescheduled(userId, bookingId, data) {
+    try {
+      let message = `Booking Anda berhasil di-reschedule ke ${new Date(data.newTime).toLocaleString("id-ID")}. PIN check-in baru: ${data.pin}. ⚠️ Ini kesempatan terakhir Anda!`;
+
+      if (data.staffChanged) {
+        message += ` Staff Anda diganti menjadi: ${data.newStaffName}.`;
+      }
+
+      const notification = await Notification.create({
+        user_id: userId,
+        booking_id: bookingId,
+        type: "booking_rescheduled",
+        title: "Booking Di-reschedule",
+        message,
+        data: JSON.stringify(data),
+      });
+
+      console.log("📨 Reschedule notification sent to user:", userId);
+      return notification;
+    } catch (error) {
+      console.error("❌ Error sending reschedule notification:", error);
+      return null;
+    }
+  }
+
+  /**
+   * ✅ Send no-show notification to barbershop owner
+   */
+  static async sendNoShowNotification(barbershopId, bookingId) {
+    try {
+      const barbershop = await Barbershop.findByPk(barbershopId);
+      if (!barbershop) return;
+
+      const notification = await Notification.create({
+        user_id: barbershop.owner_id,
+        booking_id: bookingId,
+        type: "booking_no_show",
+        title: "Customer No-Show",
+        message: "Customer tidak hadir untuk booking ini (terlambat 2x).",
+        data: JSON.stringify({ barbershopId, bookingId }),
+      });
+
+      console.log(
+        "📨 No-show notification sent to owner:",
+        barbershop.owner_id,
+      );
+      return notification;
+    } catch (error) {
+      console.error("❌ Error sending no-show notification:", error);
+      return null;
+    }
+  }
+
+  /**
+   * ✅ Send auto-completed notification
+   */
+  static async sendAutoCompletedNotification(customerId, bookingId) {
+    try {
+      const notification = await Notification.create({
+        user_id: customerId,
+        booking_id: bookingId,
+        type: "booking_auto_completed",
+        title: "Booking Selesai",
+        message:
+          "Booking Anda telah selesai secara otomatis. Jangan lupa berikan review!",
+        data: JSON.stringify({ bookingId }),
+      });
+
+      console.log(
+        "📨 Auto-completed notification sent to customer:",
+        customerId,
+      );
+      return notification;
+    } catch (error) {
+      console.error("❌ Error sending auto-completed notification:", error);
+      return null;
     }
   }
 }
