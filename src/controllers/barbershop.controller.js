@@ -164,7 +164,7 @@ exports.getAllApprovedBarbershops = async (req, res) => {
           review_count: parseInt(review_count, 10) || 0,
           booking_count: parseInt(booking_count, 10) || 0,
           service_count: parseInt(service_count, 10) || 0,
-          is_open: checkIfOpen(opening_hours), // ✅ ADD THIS
+          is_open: checkIfOpen(opening_hours),
         };
       });
 
@@ -242,7 +242,7 @@ exports.getAllApprovedBarbershops = async (req, res) => {
         review_count: parseInt(review_count, 10) || 0,
         booking_count: parseInt(booking_count, 10) || 0,
         service_count: parseInt(service_count, 10) || 0,
-        is_open: checkIfOpen(opening_hours), // ✅ ADD THIS
+        is_open: checkIfOpen(opening_hours),
       };
     });
 
@@ -276,7 +276,7 @@ exports.getBarbershopDetailsById = async (req, res) => {
         {
           model: BarbershopFacility,
           as: "facilities",
-          through: { attributes: [] }, // Hide junction table fields
+          through: { attributes: [] },
           where: { is_active: true },
           required: false,
         },
@@ -317,6 +317,23 @@ exports.registerBarbershop = async (req, res) => {
         .json({ message: "Semua data dan file wajib diisi." });
     }
 
+    // ✅ Validasi alamat unik
+    const existingAddress = await sequelize.query(
+      `SELECT barbershop_id, name FROM barbershops WHERE address = ? LIMIT 1`,
+      {
+        replacements: [address],
+        type: sequelize.QueryTypes.SELECT,
+        transaction: t,
+      }
+    );
+
+    if (existingAddress && existingAddress.length > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Alamat barbershop sudah terdaftar. Silakan gunakan alamat yang berbeda.",
+      });
+    }
+
     const ktpUrl = `/uploads/documents/${req.files.ktp[0].filename}`;
     const permitUrl = `/uploads/documents/${req.files.permit[0].filename}`;
     const parsedOpeningHours = JSON.parse(opening_hours);
@@ -326,7 +343,7 @@ exports.registerBarbershop = async (req, res) => {
         owner_id: userId,
         name,
         address,
-        city,
+        city: "Padang", // ✅ Fixed city
         opening_hours: parsedOpeningHours,
         ktp_url: ktpUrl,
         permit_url: permitUrl,
@@ -396,7 +413,6 @@ exports.getMyBarbershopById = async (req, res) => {
       });
     }
 
-    // ✅ Fetch facilities for this barbershop
     const facilities = await sequelize.query(
       `SELECT 
         bf.facility_id,
@@ -447,6 +463,25 @@ exports.updateMyBarbershop = async (req, res) => {
       return res.status(404).json({
         message: "Barbershop tidak ditemukan atau Anda tidak punya hak akses.",
       });
+    }
+
+    // ✅ Validasi alamat unik (kecuali alamat sendiri)
+    if (address && address !== barbershop.address) {
+      const existingAddress = await sequelize.query(
+        `SELECT barbershop_id, name FROM barbershops WHERE address = ? AND barbershop_id != ? LIMIT 1`,
+        {
+          replacements: [address, barbershopId],
+          type: sequelize.QueryTypes.SELECT,
+          transaction: t,
+        }
+      );
+
+      if (existingAddress && existingAddress.length > 0) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Alamat barbershop sudah terdaftar oleh barbershop lain. Silakan gunakan alamat yang berbeda.",
+        });
+      }
     }
 
     const updateData = {};
@@ -1201,7 +1236,6 @@ exports.getPopularServices = async (req, res) => {
   }
 };
 
-// ✅ FIXED: Get all available facilities (for selection UI)
 exports.getAllFacilities = async (req, res) => {
   try {
     const facilities = await sequelize.query(
@@ -1228,7 +1262,6 @@ exports.getAllFacilities = async (req, res) => {
   }
 };
 
-// ✅ FIXED: Update barbershop facilities (owner only)
 exports.updateBarbershopFacilities = async (req, res) => {
   try {
     const { barbershopId } = req.params;
@@ -1238,7 +1271,6 @@ exports.updateBarbershopFacilities = async (req, res) => {
     console.log("Facility IDs:", facility_ids);
     console.log("User ID from token:", req.user.id);
 
-    // Validate owner
     const barbershop = await Barbershop.findOne({
       where: {
         barbershop_id: barbershopId,
@@ -1252,18 +1284,15 @@ exports.updateBarbershopFacilities = async (req, res) => {
       });
     }
 
-    // Validate facility_ids
     if (!Array.isArray(facility_ids)) {
       return res.status(400).json({
         message: "facility_ids harus berupa array",
       });
     }
 
-    // Start transaction
     const transaction = await sequelize.transaction();
 
     try {
-      // Delete existing facilities
       await sequelize.query(
         `DELETE FROM BarbershopHasFacility WHERE barbershop_id = ?`,
         {
@@ -1273,15 +1302,12 @@ exports.updateBarbershopFacilities = async (req, res) => {
         },
       );
 
-      // Insert new facilities (only if array not empty)
       if (facility_ids.length > 0) {
-        // Validate each facility_id format (should be UUID)
         const validFacilities = facility_ids.filter(
           (id) => id && typeof id === "string" && id.length > 0,
         );
 
         if (validFacilities.length > 0) {
-          // ✅ FIXED: Remove created_at column - only insert barbershop_id and facility_id
           const values = validFacilities
             .map((facilityId) => `('${barbershopId}', '${facilityId}')`)
             .join(",");
@@ -1299,7 +1325,6 @@ exports.updateBarbershopFacilities = async (req, res) => {
 
       await transaction.commit();
 
-      // Fetch updated facilities
       const updatedFacilities = await sequelize.query(
         `SELECT 
           bf.facility_id,
@@ -1338,10 +1363,8 @@ exports.deleteBarbershop = async (req, res) => {
     const { barbershopId } = req.params;
     const userId = req.user.id;
 
-    // Start transaction
     transaction = await sequelize.transaction();
 
-    // Cek apakah barbershop ada dan milik user ini
     const barbershop = await sequelize.query(
       `SELECT * FROM barbershops WHERE barbershop_id = ? AND owner_id = ?`,
       {
@@ -1360,7 +1383,6 @@ exports.deleteBarbershop = async (req, res) => {
 
     const shopData = barbershop[0];
 
-    // Cek apakah ada booking aktif
     const activeBookings = await sequelize.query(
       `SELECT COUNT(*) as count FROM bookings 
        WHERE barbershop_id = ? 
@@ -1379,7 +1401,6 @@ exports.deleteBarbershop = async (req, res) => {
       });
     }
 
-    // Kumpulkan file untuk dihapus nanti
     const filesToDelete = [];
     if (shopData.ktp_url) {
       filesToDelete.push(path.join(__dirname, "../../public", shopData.ktp_url));
@@ -1391,7 +1412,6 @@ exports.deleteBarbershop = async (req, res) => {
       filesToDelete.push(path.join(__dirname, "../../public", shopData.main_image_url));
     }
 
-    // Delete related data
     const deletionSteps = [
       { name: 'BarbershopHasFacility', query: 'DELETE FROM BarbershopHasFacility WHERE barbershop_id = ?' },
       { name: 'BarbershopGallery', query: 'DELETE FROM BarbershopGallery WHERE barbershop_id = ?' },
@@ -1402,7 +1422,6 @@ exports.deleteBarbershop = async (req, res) => {
       { name: 'WorkingHours', query: 'DELETE FROM WorkingHours WHERE barbershop_id = ?' },
     ];
 
-    // Eksekusi penghapusan
     for (const step of deletionSteps) {
       try {
         await sequelize.query(step.query, {
@@ -1414,7 +1433,6 @@ exports.deleteBarbershop = async (req, res) => {
       }
     }
 
-    // Hapus barbershop terakhir
     await sequelize.query(
       `DELETE FROM barbershops WHERE barbershop_id = ?`,
       {
@@ -1423,10 +1441,8 @@ exports.deleteBarbershop = async (req, res) => {
       }
     );
 
-    // Commit transaction
     await transaction.commit();
 
-    // Hapus file setelah database berhasil
     filesToDelete.forEach((filePath) => {
       try {
         if (fs.existsSync(filePath)) {
@@ -1443,7 +1459,6 @@ exports.deleteBarbershop = async (req, res) => {
     });
 
   } catch (error) {
-    // Rollback jika ada error
     if (transaction) {
       try {
         await transaction.rollback();
