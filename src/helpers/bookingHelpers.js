@@ -1,4 +1,3 @@
-// backend/src/helpers/bookingHelpers.js
 const crypto = require('crypto');
 
 /**

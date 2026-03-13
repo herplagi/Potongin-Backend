@@ -1,4 +1,3 @@
-// src/controllers/review.controller.js - FIXED VERSION
 const Review = require("../models/Review.model");
 const Booking = require("../models/Booking.model");
 const User = require("../models/User.model");

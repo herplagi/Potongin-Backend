@@ -1,5 +1,3 @@
-// src/controllers/service.controller.js
-
 const Barbershop = require('../models/Barbershop.model');
 const Service = require('../models/Service.model');
 const User = require('../models/User.model');

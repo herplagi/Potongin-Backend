@@ -1,4 +1,3 @@
-// backend/src/services/booking.automation.service.js
 const { Op } = require('sequelize');
 const Booking = require('../models/Booking.model');
 const NotificationService = require('./notification.service');
@@ -48,13 +47,13 @@ class BookingAutomationService {
   }
 
   /**
-   * Mark no-show untuk bookings yang tidak check-in 15 menit setelah jadwal
+   * Mark no-show untuk bookings yang tidak check-in 24 jam setelah jadwal
    */
   static async markNoShowBookings() {
     try {
       console.log('🔄 Running no-show detection...');
       
-      const threshold = new Date(Date.now() - 15 * 60 * 1000); // 15 menit lalu
+      const threshold = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 jam lalu
       
       const noShowBookings = await Booking.findAll({
         where: {
@@ -127,13 +126,13 @@ class BookingAutomationService {
   }
 
   /**
-   * Expire pending payments (24 jam)
+   * Expire pending payments (10 menit)
    */
   static async expirePendingPayments() {
     try {
       console.log('🔄 Expiring pending payments...');
       
-      const threshold = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const threshold = new Date(Date.now() -  10 * 60 * 1000);
       
       const expiredBookings = await Booking.findAll({
         where: {
@@ -169,7 +168,7 @@ class BookingAutomationService {
    */
   static async runAllTasks() {
     console.log('\n========================================');
-    console.log('🤖 BOOKING AUTOMATION SERVICE STARTED');
+    console.log('BOOKING AUTOMATION SERVICE STARTED');
     console.log('Time:', new Date().toISOString());
     console.log('========================================\n');
 

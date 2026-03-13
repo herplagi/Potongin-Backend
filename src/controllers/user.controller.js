@@ -1,5 +1,3 @@
-// backend/src/controllers/user.controller.js - ADD THESE METHODS
-
 const User = require('../models/User.model');
 const bcrypt = require('bcryptjs');
 const path = require('path');

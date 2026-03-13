@@ -1,5 +1,3 @@
-// src/controllers/notification.controller.js
-
 const Notification = require('../models/Notification.model');
 const User = require('../models/User.model');
 

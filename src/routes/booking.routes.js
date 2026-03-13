@@ -1,4 +1,3 @@
-// backend/src/routes/booking.routes.js - COMPLETE & TESTED
 const express = require('express');
 const router = express.Router();
 const BookingController = require('../controllers/booking.controller');

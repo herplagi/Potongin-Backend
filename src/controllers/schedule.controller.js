@@ -1,4 +1,3 @@
-// src/controllers/schedule.controller.js - UPDATED WITH CONFLICT HANDLING
 const Barbershop = require('../models/Barbershop.model');
 const Booking = require('../models/Booking.model');
 const User = require('../models/User.model');

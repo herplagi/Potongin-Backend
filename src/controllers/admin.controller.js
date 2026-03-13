@@ -20,7 +20,6 @@ exports.getAllBarbershops = async (req, res) => {
       },
       order: [["createdAt", "DESC"]],
     });
-    // Langsung kirim array 'allShops' tanpa mapping dan parsing manual
     res.status(200).json(allShops);
   } catch (error) {
     console.error("GET ALL BARBERSHOPS ERROR:", error);

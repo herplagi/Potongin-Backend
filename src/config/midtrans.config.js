@@ -1,4 +1,3 @@
-// src/config/midtrans.config.js
 const midtransClient = require('midtrans-client');
 
 // ✅ VALIDASI ENVIRONMENT VARIABLES

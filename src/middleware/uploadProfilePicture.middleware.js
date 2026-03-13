@@ -1,4 +1,3 @@
-// backend/src/middleware/uploadProfilePicture.middleware.js
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');

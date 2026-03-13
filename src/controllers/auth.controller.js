@@ -1,4 +1,3 @@
-// src/controllers/auth.controller.js - FIXED VERSION
 const User = require("../models/User.model");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -59,19 +58,19 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: "Password salah" });
     }
 
-    // ✅ FIXED: Tambahkan phone_number ke JWT payload
+    // Create JWT payload
     const payload = {
       id: user.user_id,
       name: user.name,
       email: user.email,
-      phone_number: user.phone_number, // ✅ TAMBAHKAN INI
+      phone_number: user.phone_number,
       role: user.role,
       is_customer: user.is_customer,
       is_owner: user.is_owner,
     };
     
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: "24h",
+      expiresIn: "1d",
     });
 
     res.status(200).json({

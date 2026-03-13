@@ -1,4 +1,3 @@
-// src/models/Review.model.js - FIXED VERSION
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const User = require('./User.model');

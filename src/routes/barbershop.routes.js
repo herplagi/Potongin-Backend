@@ -1,4 +1,3 @@
-// src/routes/barbershop.routes.js - COMPLETE FIXED VERSION
 const express = require("express");
 const router = express.Router();
 

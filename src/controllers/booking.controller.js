@@ -1,8 +1,8 @@
-// backend/src/controllers/booking.controller.js
 const { Op } = require("sequelize");
 const Booking = require("../models/Booking.model");
 const Service = require("../models/Service.model");
 const Staff = require("../models/Staff.model");
+const StaffUnavailability = require("../models/StaffUnavailability");
 const Barbershop = require("../models/Barbershop.model");
 const User = require("../models/User.model");
 const { snap, getFrontendUrl, getNotificationUrl } = require("../config/midtrans.config");
@@ -14,7 +14,25 @@ const {
     formatBookingResponse 
 } = require("../helpers/bookingHelpers");
 
-// ✅ CREATE BOOKING (existing - no change)
+const getUnavailableStaffIds = async (staffIds, bookingStartTime, bookingEndTime) => {
+  if (!Array.isArray(staffIds) || staffIds.length === 0) {
+    return [];
+  }
+
+  const rows = await StaffUnavailability.findAll({
+    where: {
+      staff_id: { [Op.in]: staffIds },
+      status: "active",
+      start_time: { [Op.lt]: bookingEndTime },
+      end_time: { [Op.gt]: bookingStartTime },
+    },
+    attributes: ["staff_id"],
+  });
+
+  return [...new Set(rows.map((row) => row.staff_id))];
+};
+
+// CREATE BOOKING
 exports.createBooking = async (req, res) => {
   try {
     const customerId = req.user.id;
@@ -50,6 +68,18 @@ exports.createBooking = async (req, res) => {
         return res.status(404).json({ message: "Staff tidak ditemukan." });
       }
 
+      const selectedUnavailable = await getUnavailableStaffIds(
+        [staff_id],
+        bookingStartTime,
+        bookingEndTime,
+      );
+
+      if (selectedUnavailable.length > 0) {
+        return res.status(409).json({
+          message: "Staff tidak tersedia pada rentang waktu tersebut.",
+        });
+      }
+
       const conflictingBooking = await Booking.findOne({
         where: {
           staff_id: staff_id,
@@ -73,6 +103,13 @@ exports.createBooking = async (req, res) => {
         });
       }
 
+      const allStaffIds = allStaff.map((staff) => staff.staff_id);
+      const unavailableByTimeOff = await getUnavailableStaffIds(
+        allStaffIds,
+        bookingStartTime,
+        bookingEndTime,
+      );
+
       const conflictingBookings = await Booking.findAll({
         where: {
           barbershop_id: barbershop_id,
@@ -83,7 +120,11 @@ exports.createBooking = async (req, res) => {
       });
 
       const busyStaffIds = conflictingBookings.map((b) => b.staff_id);
-      const availableStaff = allStaff.find((staff) => !busyStaffIds.includes(staff.staff_id));
+      const availableStaff = allStaff.find(
+        (staff) =>
+          !busyStaffIds.includes(staff.staff_id) &&
+          !unavailableByTimeOff.includes(staff.staff_id)
+      );
 
       if (!availableStaff) {
         return res.status(409).json({

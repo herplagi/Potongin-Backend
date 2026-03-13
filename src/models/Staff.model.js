@@ -1,4 +1,3 @@
-// src/models/Staff.model.js - FIXED VERSION
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 

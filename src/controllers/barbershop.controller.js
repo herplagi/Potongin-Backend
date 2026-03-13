@@ -1,11 +1,9 @@
-// Imports - URUTAN PENTING!
 const sequelize = require("../config/database");
 const { Op } = require("sequelize");
 const fs = require("fs");
 const path = require("path");
 const { startOfDay, endOfDay, startOfMonth, endOfMonth } = require("date-fns");
 
-// Impor semua model yang dibutuhkan
 const Barbershop = require("../models/Barbershop.model");
 const User = require("../models/User.model");
 const Service = require("../models/Service.model");
