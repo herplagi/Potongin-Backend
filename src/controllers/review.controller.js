@@ -28,10 +28,19 @@ exports.checkCanReview = async (req, res) => {
     }
 
     const existingReview = await Review.findOne({
-      where: { booking_id },
+      where: { booking_id, customer_id: customerId },
     });
 
     if (existingReview) {
+      if (existingReview.status === "rejected") {
+        return res.status(200).json({
+          canReview: true,
+          hasReview: false,
+          isResubmission: true,
+          message: "Review sebelumnya ditolak. Silakan kirim ulang.",
+        });
+      }
+
       return res.status(200).json({
         canReview: false,
         hasReview: true,
@@ -74,10 +83,30 @@ exports.createReview = async (req, res) => {
     }
 
     const existingReview = await Review.findOne({
-      where: { booking_id },
+      where: { booking_id, customer_id: customerId },
     });
 
     if (existingReview) {
+      if (existingReview.status === "rejected") {
+        await existingReview.update({
+          rating,
+          title: title || null,
+          comment: comment || null,
+          status: "pending",
+          is_flagged: false,
+          rejection_reason: null,
+          admin_note: null,
+          moderated_by: null,
+          moderated_at: null,
+        });
+
+        return res.status(200).json({
+          message: "Review berhasil dikirim ulang dan menunggu moderasi",
+          review: existingReview,
+          resubmitted: true,
+        });
+      }
+
       return res.status(400).json({
         message: "Anda sudah memberikan review untuk booking ini",
       });
